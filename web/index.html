@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#FFFFFF">
+  <title>ORB — Creative intelligence</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="#screen-home" aria-label="ORB home">ORB</a>
+  <nav class="mode-nav" aria-label="Orb modes">
+    <button class="mode-tab" id="tab-decode" type="button" aria-pressed="true">Decode</button>
+    <button class="mode-tab" id="tab-compose" type="button" disabled aria-pressed="false" title="Coming soon">Compose</button>
+    <button class="mode-tab" id="tab-enhance" type="button" disabled aria-pressed="false" title="Coming soon">Enhance</button>
+  </nav>
+</header>
+
+<main class="container">
+
+  <section id="screen-home" class="screen" tabindex="-1">
+    <div class="hero">
+      <h1>Every visual starts with an idea.</h1>
+      <p class="hero-sub">Decode, compose, and enhance your creative prompts.</p>
+    </div>
+
+    <div class="mode-cards" role="list">
+      <div class="mode-card selected" role="listitem">
+        <div class="mode-head"><span class="mode-name">Decode</span><span class="mode-state active">Available</span></div>
+        <p>Reconstruct a plausible generation prompt from an uploaded video.</p>
+      </div>
+      <div class="mode-card" role="listitem" aria-disabled="true">
+        <div class="mode-head"><span class="mode-name">Compose</span><span class="mode-state">Coming soon</span></div>
+        <p>Generate a new, generation-ready prompt from a reference visual.</p>
+      </div>
+      <div class="mode-card" role="listitem" aria-disabled="true">
+        <div class="mode-head"><span class="mode-name">Enhance</span><span class="mode-state">Coming soon</span></div>
+        <p>Refine an existing prompt with composition, lighting, and camera guidance.</p>
+      </div>
+    </div>
+
+    <div class="upload-shell">
+      <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Choose a video file">
+        <div class="dz-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M16 22V7M10.5 12.5 16 7l5.5 5.5M7 24.5h18"/></svg>
+        </div>
+        <div class="dz-text"><strong>Drop your video here</strong><span>or choose a file from your device</span></div>
+        <input id="file-input" type="file" accept="video/mp4,.mp4,.m4v,.mov,.webm" hidden>
+      </div>
+      <p class="upload-hint">MP4 &middot; MOV &middot; WebM &mdash; up to 200 MB. Image decoding arrives in the next stage.</p>
+
+      <div id="file-card" class="file-card hidden">
+        <div class="file-info">
+          <p class="file-kicker">Ready to decode</p>
+          <div class="file-name" id="file-name"></div>
+          <div class="file-meta" id="file-meta"></div>
+          <button id="file-clear" class="btn ghost" type="button">Choose a different video</button>
+        </div>
+      </div>
+
+      <div id="service-status" class="service-status" role="status" aria-live="polite">Connecting to the Orb service&hellip;</div>
+      <button id="decode-btn" class="btn primary block initializing" type="button" disabled>
+        <span>Initializing</span><small>Orb service waking up</small>
+      </button>
+      <div id="upload-error" class="error hidden" role="alert"></div>
+    </div>
+  </section>
+
+  <section id="screen-processing" class="screen hidden" tabindex="-1">
+    <div class="processing-head">
+      <div class="orb-spin" aria-hidden="true"></div>
+      <div id="phase-text" class="phase" role="status" aria-live="polite">Starting&hellip;</div>
+      <div id="phase-detail" class="phase-detail"></div>
+    </div>
+    <ol id="step-list" class="steps" aria-label="Decoding stages"></ol>
+    <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="upload-bar" class="progress-bar"></div></div>
+    <p class="hint">Stages advance as the Orb engine reports them.</p>
+    <div id="job-error" class="error hidden" role="alert"></div>
+    <button id="back-btn" class="btn ghost hidden" type="button">Back to upload</button>
+  </section>
+
+  <section id="screen-results" class="screen hidden" tabindex="-1">
+    <div class="results-head">
+      <p class="eyebrow">Decoded structure</p>
+      <h2 id="res-title"></h2>
+      <div id="res-chips" class="chips"></div>
+      <div id="res-mode" class="res-mode">LOCAL STRUCTURAL ANALYSIS &middot; no AI model or payment used</div>
+    </div>
+
+    <div class="card video-card">
+      <video id="res-video" class="preview" controls playsinline preload="metadata"></video>
+    </div>
+
+    <div class="card">
+      <p class="card-overline">Structure</p>
+      <h3>Scene breakdown</h3>
+      <p id="res-summary" class="summary"></p>
+      <div id="res-scenes" class="scenes"></div>
+    </div>
+
+    <div class="card prompt-card unavailable">
+      <p class="card-overline">Next step</p>
+      <h3>Reconstructed prompt</h3>
+      <p class="unavailable-note">Prompt reconstruction unlocks when the Orb credit system ships. This stage decodes video structure only &mdash; no prompt is fabricated.</p>
+    </div>
+
+    <button id="again-btn" class="btn primary block" type="button">Decode another video</button>
+  </section>
+
+</main>
+
+<footer class="footer">ORB &middot; creative findings are reconstruction hypotheses, not measurements.</footer>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

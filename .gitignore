@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+web_dist/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local runtime data
+api_output/
+uploads/
+orb_output/
+orb_uploads/
+output/
+payments.db
+*.log
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

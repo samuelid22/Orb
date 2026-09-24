@@ -85,10 +85,20 @@ module with its replay-protection tests (dormant behind the flag).
 
 - Backend: 138 passed (`pytest`), own `.venv`, Python 3.13.
 - Frontend: 11 passed (`test:web`: 8 app + 3 api-url), jsdom.
+  Two failures during development were test-harness issues, not app bugs
+  (a label assertion that ignored fast mock resolution, and a queued poll
+  stuck behind a real 1500 ms timer); both fixed in the tests.
 - `vite build`: clean (`web_dist/`).
 - Independent startup smoke test on port 8790: `/api/health` ok
   (`payment_required: false`), `/api/ready` ready,
   `/api/payments/config` 503 as designed.
+
+## Local history (no remote)
+
+- `d0391b2` — initial project (engine copy, payment gate, new frontend,
+  configs, README).
+- `b56b3f7` — this handoff document.
+- Working tree is clean; nothing has been pushed or deployed anywhere.
 
 ## Unresolved issues
 

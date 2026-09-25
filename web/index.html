@@ -3,115 +3,206 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#FFFFFF">
-  <title>ORB — Creative intelligence</title>
+  <meta name="theme-color" content="#F7FBFF">
+  <title>Orb — Creative intelligence</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-
-<header class="topbar">
-  <a class="wordmark" href="#screen-home" aria-label="ORB home">ORB</a>
-  <nav class="mode-nav" aria-label="Orb modes">
-    <button class="mode-tab" id="tab-decode" type="button" aria-pressed="true">Decode</button>
-    <button class="mode-tab" id="tab-compose" type="button" disabled aria-pressed="false" title="Coming soon">Compose</button>
-    <button class="mode-tab" id="tab-enhance" type="button" disabled aria-pressed="false" title="Coming soon">Enhance</button>
-  </nav>
-</header>
-
-<main class="container">
-
-  <section id="screen-home" class="screen" tabindex="-1">
-    <div class="hero">
-      <h1>Every visual starts with an idea.</h1>
-      <p class="hero-sub">Decode, compose, and enhance your creative prompts.</p>
+<div class="app-frame">
+  <header class="topbar">
+    <div class="brand" aria-label="Orb">
+      <span class="brand-icon" aria-hidden="true">
+        <svg class="planet" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="planet-fill" x1=".15" y1=".05" x2=".85" y2=".95">
+              <stop stop-color="#D4F2FF"/>
+              <stop offset=".46" stop-color="#75BCFF"/>
+              <stop offset="1" stop-color="#2777DE"/>
+            </linearGradient>
+            <linearGradient id="ring-fill" x1="0" y1="0" x2="1" y2="1">
+              <stop stop-color="#9DD8FF"/>
+              <stop offset="1" stop-color="#367EE1"/>
+            </linearGradient>
+          </defs>
+          <ellipse cx="40" cy="40" rx="35" ry="10" transform="rotate(-32 40 40)" fill="none" stroke="url(#ring-fill)" stroke-width="5"/>
+          <circle cx="40" cy="40" r="24" fill="url(#planet-fill)"/>
+          <path d="M10 56c13 4 43-11 61-31" fill="none" stroke="#B5E3FF" stroke-width="5" stroke-linecap="round"/>
+        </svg>
+      </span>
+      <span class="wordmark">Orb</span>
     </div>
-
-    <div class="mode-cards" role="list">
-      <div class="mode-card selected" role="listitem">
-        <div class="mode-head"><span class="mode-name">Decode</span><span class="mode-state active">Available</span></div>
-        <p>Reconstruct a plausible generation prompt from an uploaded video.</p>
-      </div>
-      <div class="mode-card" role="listitem" aria-disabled="true">
-        <div class="mode-head"><span class="mode-name">Compose</span><span class="mode-state">Coming soon</span></div>
-        <p>Generate a new, generation-ready prompt from a reference visual.</p>
-      </div>
-      <div class="mode-card" role="listitem" aria-disabled="true">
-        <div class="mode-head"><span class="mode-name">Enhance</span><span class="mode-state">Coming soon</span></div>
-        <p>Refine an existing prompt with composition, lighting, and camera guidance.</p>
-      </div>
-    </div>
-
-    <div class="upload-shell">
-      <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Choose a video file">
-        <div class="dz-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32"><path d="M16 22V7M10.5 12.5 16 7l5.5 5.5M7 24.5h18"/></svg>
+    <div class="menu-wrap">
+      <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Open menu" aria-controls="site-menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <nav id="site-menu" class="site-menu hidden" aria-label="Main menu">
+        <div class="menu-group">
+          <p class="menu-heading">Home</p>
+          <button id="menu-home" class="menu-item menu-action" type="button">Home</button>
         </div>
-        <div class="dz-text"><strong>Drop your video here</strong><span>or choose a file from your device</span></div>
-        <input id="file-input" type="file" accept="video/mp4,.mp4,.m4v,.mov,.webm" hidden>
-      </div>
-      <p class="upload-hint">MP4 &middot; MOV &middot; WebM &mdash; up to 200 MB. Image decoding arrives in the next stage.</p>
+        <div class="menu-group">
+          <p class="menu-heading">Workspace</p>
+          <div class="menu-item menu-unavailable"><span>My Creations</span><small>Coming soon</small></div>
+        </div>
+        <div class="menu-group">
+          <p class="menu-heading">Account</p>
+          <button id="menu-wallet" class="menu-item menu-action" type="button">Wallet &amp; Credits <small>Testnet</small></button>
+          <div class="menu-item menu-unavailable"><span>Settings</span><small>Coming soon</small></div>
+        </div>
+        <div class="menu-group">
+          <p class="menu-heading">Information</p>
+          <button id="menu-about" class="menu-item menu-action" type="button">About Orb</button>
+        </div>
+      </nav>
+    </div>
+  </header>
 
-      <div id="file-card" class="file-card hidden">
-        <div class="file-info">
-          <p class="file-kicker">Ready to decode</p>
+  <section id="about-panel" class="about-panel hidden" role="dialog" aria-labelledby="about-title" aria-modal="false">
+    <div class="about-head">
+      <h2 id="about-title">About Orb</h2>
+      <button id="about-close" class="about-close" type="button" aria-label="Close About Orb">×</button>
+    </div>
+    <p>Orb helps turn visual references into creative direction.</p>
+    <ul>
+      <li><strong>Decode</strong> <span>Reconstruct a plausible prompt from an image or video.</span></li>
+      <li><strong>Compose</strong> <span>Create a new prompt inspired by a visual reference.</span></li>
+      <li><strong>Enhance</strong> <span>Refine an existing generation prompt.</span></li>
+    </ul>
+  </section>
+
+  <section id="wallet-panel" class="about-panel wallet-panel hidden" role="dialog" aria-labelledby="wallet-title" aria-modal="false">
+    <div class="about-head">
+      <h2 id="wallet-title">Wallet &amp; Credits</h2>
+      <button id="wallet-close" class="about-close" type="button" aria-label="Close Wallet & Credits">×</button>
+    </div>
+    <p class="testnet-callout"><strong>Arbitrum Sepolia · TESTNET ONLY</strong><br>Credits are for demo/testing and have no real-money value. You may need testnet ETH for the transfer and gas.</p>
+    <p id="wallet-network" class="wallet-line">Wallet not connected.</p>
+    <p id="wallet-address" class="wallet-line"></p>
+    <p id="wallet-balance" class="wallet-balance">0 testnet credits available</p>
+    <div class="wallet-actions">
+      <button id="wallet-connect" class="btn primary" type="button">Connect and sign</button>
+      <button id="wallet-switch" class="btn ghost hidden" type="button">Switch to Arbitrum Sepolia</button>
+    </div>
+    <div id="wallet-purchase" class="wallet-purchase hidden">
+      <label for="credit-count">Buy testnet credits</label>
+      <select id="credit-count"><option value="1">1 credit</option><option value="3">3 credits</option><option value="5">5 credits</option></select>
+      <p id="credit-price" class="wallet-line"></p>
+      <button id="wallet-buy" class="btn primary block" type="button">Pay with testnet ETH</button>
+      <button id="wallet-retry" class="btn ghost hidden" type="button">Check pending transaction</button>
+    </div>
+    <p id="wallet-feedback" class="wallet-line" role="status" aria-live="polite"></p>
+  </section>
+
+  <main class="container">
+    <section id="screen-home" class="screen" tabindex="-1">
+      <div class="hero">
+        <span class="studio-badge">AI CREATIVE STUDIO</span>
+        <h1>Every visual starts with an idea.</h1>
+        <p class="hero-sub">Decode, compose and enhance your creative prompts.</p>
+      </div>
+
+      <div id="upload-shell" class="upload-shell">
+        <div id="dropzone" class="dropzone" aria-label="Image or video upload area">
+          <div class="dz-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M43 43h5a10 10 0 0 0 1.3-19.9A18 18 0 0 0 15 27a9 9 0 0 0 2 17h5" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M32 51V31m-8 8 8-8 8 8" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="dz-text">
+            <strong>Drop your image or video</strong>
+            <span>Your reference. Your next creation.</span>
+            <small>JPEG, PNG, WebP up to 20 MB; MP4, MOV, M4V, WebM up to 200 MB.</small>
+          </div>
+          <button id="choose-file-btn" class="choose-file-btn" type="button">Choose file</button>
+          <input id="file-input" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,video/mp4,.mp4,.m4v,.mov,.webm" hidden>
+        </div>
+
+        <div id="file-card" class="file-card hidden">
+          <p id="file-kicker" class="file-kicker">Ready to decode</p>
           <div class="file-name" id="file-name"></div>
           <div class="file-meta" id="file-meta"></div>
-          <button id="file-clear" class="btn ghost" type="button">Choose a different video</button>
+          <button id="file-clear" class="btn ghost" type="button">Choose a different file</button>
+          <button id="decode-btn" class="btn primary block initializing" type="button" disabled>
+            <span>Initializing</span><small>Orb service waking up</small>
+          </button>
         </div>
+        <div id="service-status" class="service-status" role="status" aria-live="polite">Connecting to the Orb service…</div>
+        <button id="upload-credits-cta" class="btn ghost credit-cta hidden" type="button">Connect wallet or buy testnet credits</button>
+        <div id="upload-error" class="error hidden" role="alert"></div>
       </div>
 
-      <div id="service-status" class="service-status" role="status" aria-live="polite">Connecting to the Orb service&hellip;</div>
-      <button id="decode-btn" class="btn primary block initializing" type="button" disabled>
-        <span>Initializing</span><small>Orb service waking up</small>
-      </button>
-      <div id="upload-error" class="error hidden" role="alert"></div>
-    </div>
-  </section>
+      <div id="enhance-shell" class="upload-shell enhance-shell hidden">
+        <label for="prompt-input" class="enhance-label">Your existing prompt</label>
+        <textarea id="prompt-input" rows="6" maxlength="4000" placeholder="Describe the visual you want to create…"></textarea>
+        <div class="enhance-options">
+          <label>Output <select id="enhance-output"><option value="image">Image</option><option value="video">Video</option></select></label>
+          <label>Visual style <input id="enhance-style" type="text" maxlength="80" placeholder="Optional"></label>
+          <label>Detail <select id="enhance-detail"><option value="balanced">Balanced</option><option value="concise">Concise</option><option value="detailed">Detailed</option></select></label>
+        </div>
+        <button id="enhance-btn" class="btn primary block" type="button" disabled>Enhance prompt</button>
+        <div id="enhance-status" class="service-status" role="status" aria-live="polite">Connecting to the Orb service…</div>
+        <button id="enhance-credits-cta" class="btn ghost credit-cta hidden" type="button">Connect wallet or buy testnet credits</button>
+        <div id="enhance-error" class="error hidden" role="alert"></div>
+      </div>
 
-  <section id="screen-processing" class="screen hidden" tabindex="-1">
-    <div class="processing-head">
-      <div class="orb-spin" aria-hidden="true"></div>
-      <div id="phase-text" class="phase" role="status" aria-live="polite">Starting&hellip;</div>
-      <div id="phase-detail" class="phase-detail"></div>
-    </div>
-    <ol id="step-list" class="steps" aria-label="Decoding stages"></ol>
-    <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="upload-bar" class="progress-bar"></div></div>
-    <p class="hint">Stages advance as the Orb engine reports them.</p>
-    <div id="job-error" class="error hidden" role="alert"></div>
-    <button id="back-btn" class="btn ghost hidden" type="button">Back to upload</button>
-  </section>
+      <nav class="mode-pills" aria-label="Orb modes">
+        <button id="mode-decode" class="mode-pill active" type="button" aria-current="page">Decode</button>
+        <button id="mode-compose" class="mode-pill" type="button">Compose</button>
+        <button id="mode-enhance" class="mode-pill" type="button">Enhance</button>
+      </nav>
+      <p class="testnet-note">Arbitrum Sepolia testnet credits · Demo only · No real-money value</p>
+    </section>
 
-  <section id="screen-results" class="screen hidden" tabindex="-1">
-    <div class="results-head">
-      <p class="eyebrow">Decoded structure</p>
-      <h2 id="res-title"></h2>
-      <div id="res-chips" class="chips"></div>
-      <div id="res-mode" class="res-mode">LOCAL STRUCTURAL ANALYSIS &middot; no AI model or payment used</div>
-    </div>
+    <section id="screen-processing" class="screen hidden secondary-screen" tabindex="-1">
+      <div class="processing-head">
+        <div class="orb-spin" aria-hidden="true"></div>
+        <div id="phase-text" class="phase" role="status" aria-live="polite">Starting…</div>
+        <div id="phase-detail" class="phase-detail"></div>
+      </div>
+      <ol id="step-list" class="steps" aria-label="Processing stages"></ol>
+      <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="upload-bar" class="progress-bar"></div></div>
+      <p class="hint">Stages advance as the Orb engine reports them.</p>
+      <div id="job-error" class="error hidden" role="alert"></div>
+      <button id="back-btn" class="btn ghost hidden" type="button">Back to upload</button>
+    </section>
 
-    <div class="card video-card">
-      <video id="res-video" class="preview" controls playsinline preload="metadata"></video>
-    </div>
+    <section id="screen-results" class="screen hidden secondary-screen" tabindex="-1">
+      <div class="results-head">
+        <p id="res-eyebrow" class="eyebrow">Decoded reference</p>
+        <h2 id="res-title"></h2>
+        <div id="res-chips" class="chips"></div>
+        <div id="res-mode" class="res-mode">AI analysis · original prompt cannot be guaranteed</div>
+      </div>
 
-    <div class="card">
-      <p class="card-overline">Structure</p>
-      <h3>Scene breakdown</h3>
-      <p id="res-summary" class="summary"></p>
-      <div id="res-scenes" class="scenes"></div>
-    </div>
+      <div id="res-preview-card" class="card video-card hidden">
+        <video id="res-video" class="preview hidden" controls playsinline preload="metadata"></video>
+        <img id="res-image" class="preview hidden" alt="Uploaded reference preview">
+      </div>
 
-    <div class="card prompt-card unavailable">
-      <p class="card-overline">Next step</p>
-      <h3>Reconstructed prompt</h3>
-      <p class="unavailable-note">Prompt reconstruction unlocks when the Orb credit system ships. This stage decodes video structure only &mdash; no prompt is fabricated.</p>
-    </div>
+      <div id="res-analysis-card" class="card hidden">
+        <p class="card-overline">Visual reference</p>
+        <h3>Visual analysis</h3>
+        <p id="res-summary" class="summary"></p>
+        <dl id="res-analysis" class="analysis-list"></dl>
+        <div id="res-scenes" class="scenes"></div>
+      </div>
 
-    <button id="again-btn" class="btn primary block" type="button">Decode another video</button>
-  </section>
+      <div class="card prompt-card">
+        <p class="card-overline">Your prompt</p>
+        <h3 id="res-prompt-heading">Reconstructed prompt</h3>
+        <p id="res-notice" class="summary"></p>
+        <div id="res-original" class="original-prompt hidden"><strong>Original prompt</strong><p id="res-original-text"></p></div>
+        <pre id="res-prompt" class="prompt-text"></pre>
+        <button id="copy-prompt" class="btn ghost" type="button">Copy prompt</button>
+        <span id="copy-status" class="copy-status" role="status" aria-live="polite"></span>
+        <div id="res-refinements" class="refinements hidden"></div>
+      </div>
 
-</main>
-
-<footer class="footer">ORB &middot; creative findings are reconstruction hypotheses, not measurements.</footer>
+      <button id="again-btn" class="btn primary block" type="button">Start another</button>
+    </section>
+  </main>
+</div>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

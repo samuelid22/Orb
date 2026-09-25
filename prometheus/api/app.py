@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -22,10 +23,13 @@ from starlette.concurrency import run_in_threadpool
 
 from prometheus import __version__
 from prometheus.analysis.prompt_builder import build_reconstructed_prompt
+from prometheus.analysis.orb_ai import OrbAIService, _visual_from_report, video_generation_prompt
 from prometheus.analysis.remix import apply_remix
 from prometheus.analysis.schema import AnalysisReport
 from prometheus.api.dto import build_basic_result_dto, build_result_dto
 from prometheus.api.jobs import Job, JobManager
+from prometheus.api.orb_credits import CHAIN_ID, CreditConfig, CreditError, CreditService
+from prometheus.api.orb_deployment import validate_public_deployment
 from prometheus.api.payments import PaymentConfig, PaymentError, PaymentPending, PaymentService
 from prometheus.config import PrometheusConfig
 from prometheus.errors import PrometheusError
@@ -40,6 +44,8 @@ _ROOT_DIR = Path(__file__).resolve().parents[2]
 _WEB_DIR = _ROOT_DIR / "web"
 _BUILT_WEB_DIR = _ROOT_DIR / "web_dist"
 _ALLOWED_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm")
+_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
+_MAX_IMAGE_BYTES = 20 * 1024 * 1024
 _SCENE_STAGE_RE = re.compile(r"Analyzing scene (\d+) of (\d+)")
 _DEFAULT_NIMIQ_RECIPIENT = "NQ43 HJUE 9G1D 5LQF C752 5T7H EJ9M 4QEM 1CB1"
 _DEFAULT_NIMIQ_RPC_URL = "https://rpc.testnet.nimiqwatch.com/"
@@ -74,6 +80,26 @@ def _provider_is_ready(provider: str) -> bool:
 def _storage_path(value: Path | str) -> Path:
     path = Path(value)
     return (path if path.is_absolute() else _ROOT_DIR / path).resolve()
+
+
+def _write_orb_result(run_dir: Path, payload: dict[str, Any]) -> None:
+    """Publish a complete result before a reserved credit can be consumed."""
+    destination = run_dir / "orb_result.json"
+    temporary = run_dir / f".orb_result.{uuid.uuid4().hex}.tmp"
+    try:
+        with temporary.open("x", encoding="utf-8") as result_file:
+            json.dump(payload, result_file, ensure_ascii=False)
+            result_file.flush()
+            os.fsync(result_file.fileno())
+        os.replace(temporary, destination)
+        if os.name != "nt":
+            directory_fd = os.open(run_dir, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _cors_origins(value: str | None) -> list[str]:
@@ -152,17 +178,38 @@ def create_app(
     max_upload_bytes: int = 200 * 1024 * 1024,
     require_payment: bool | None = None,
     payment_service: PaymentService | None = None,
+    orb_ai_service: OrbAIService | None = None,
+    orb_credit_service: CreditService | None = None,
 ) -> FastAPI:
-    provider = provider or _resolve_provider()
-    output_root = _storage_path(output_dir or os.environ.get("PROMETHEUS_API_OUTPUT_DIR", "api_output"))
-    upload_root = _storage_path(upload_dir or os.environ.get("PROMETHEUS_API_UPLOAD_DIR", "uploads"))
+    provider = provider or os.environ.get("ORB_AI_PROVIDER") or _resolve_provider()
+    model = model or os.environ.get("ORB_AI_MODEL")
+    output_root = _storage_path(output_dir or os.environ.get("ORB_OUTPUT_DIR")
+                                or os.environ.get("PROMETHEUS_API_OUTPUT_DIR", "api_output"))
+    upload_root = _storage_path(upload_dir or os.environ.get("ORB_UPLOAD_DIR")
+                                or os.environ.get("PROMETHEUS_API_UPLOAD_DIR", "uploads"))
+    credit_db = _storage_path(os.environ.get("ORB_CREDIT_DB", str(output_root / "orb_credits.sqlite3")))
+    validate_public_deployment(output_root, upload_root, credit_db)
     output_root.mkdir(parents=True, exist_ok=True)
     upload_root.mkdir(parents=True, exist_ok=True)
+    credit_service = orb_credit_service or CreditService(CreditConfig(
+        database=credit_db,
+        public_origin=os.environ.get("ORB_PUBLIC_ORIGIN", "").rstrip("/"),
+        rpc_url=os.environ.get("ORB_ARBITRUM_RPC_URL", ""),
+        receiver=os.environ.get("ORB_CREDIT_RECEIVER", ""),
+        price_wei=int(os.environ.get("ORB_CREDIT_PRICE_WEI", "1000000000000")),
+        confirmations=int(os.environ.get("ORB_PAYMENT_CONFIRMATIONS", "3")),
+        enabled=os.environ.get("ORB_CREDITS_ENABLED") == "1",
+    ))
+    credit_service.reconcile(output_root)
+    public_mode = os.environ.get("ORB_ENV") == "production"
     # Orb isolation: the inherited Nimiq payment code stays dormant unless it
     # is explicitly enabled for development. Orb will use a separate
     # Arbitrum-based payment system in a later stage; nothing may depend on
     # the original Prometheus payment accounts or testnet infrastructure.
-    payments_enabled = os.environ.get("ORB_ENABLE_NIMIQ_PAYMENTS", "").strip() == "1"
+    payments_enabled = (
+        os.environ.get("ORB_ENV") == "local"
+        and os.environ.get("ORB_ENABLE_NIMIQ_PAYMENTS", "").strip() == "1"
+    )
     if require_payment is None:
         require_payment = provider != "mock" and payments_enabled
     payment_network = os.environ.get("PROMETHEUS_NIMIQ_NETWORK", "testnet")
@@ -183,20 +230,66 @@ def create_app(
         else None
     )
 
-    app = FastAPI(title="Prometheus", version=__version__, docs_url="/api/docs")
+    app = FastAPI(title="Orb", version=__version__, docs_url="/api/docs")
     app.state.prometheus_startup_complete = False
-    cors_origins = _cors_origins(os.environ.get("PROMETHEUS_CORS_ORIGINS"))
+    orb_origin = os.environ.get("ORB_PUBLIC_ORIGIN", "").rstrip("/")
+    cors_origins = [orb_origin] if orb_origin else []
+    if os.environ.get("ORB_ENV") == "local":
+        cors_origins.extend(origin for origin in _cors_origins(os.environ.get("PROMETHEUS_CORS_ORIGINS"))
+                            if origin not in cors_origins)
     if cors_origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_credentials=False,
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type"],
+            allow_headers=["Content-Type", "Authorization", "X-Orb-Idempotency-Key"],
         )
     manager = JobManager(max_workers=1)
     staged_uploads: dict[str, tuple[str, Path, float]] = {}
     staged_uploads_lock = threading.Lock()
+
+    def _local_ai_allowed(request: Request) -> bool:
+        return (
+            os.environ.get("ORB_ENV") == "local"
+            and os.environ.get("ORB_AI_LOCAL_TESTING") == "1"
+            and request.client is not None
+            and request.client.host in {"127.0.0.1", "::1", "testclient"}
+            and (request.url.hostname or "") in {"localhost", "127.0.0.1", "::1", "testserver"}
+            and not request.headers.get("x-forwarded-for")
+            and not request.headers.get("forwarded")
+        )
+
+    def _authorize_ai(request: Request) -> str | None:
+        """Return a paid wallet or None for explicit loopback-only testing."""
+        if provider == "mock" or not _provider_is_ready(provider):
+            raise HTTPException(status_code=503, detail="Configure a real Orb AI provider and server-side API key.")
+        if _local_ai_allowed(request):
+            return None
+        if not credit_service.config.ready:
+            raise HTTPException(status_code=402, detail="AI operations require verified testnet credits. Payments are not configured.")
+        try:
+            credit_service._check_origin(request.headers.get("origin"))
+            return credit_service.authenticate(request.headers.get("authorization"))
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+    def _wallet(request: Request, *, mutating: bool = False) -> str:
+        try:
+            if mutating:
+                credit_service._check_origin(request.headers.get("origin"))
+            return credit_service.authenticate(request.headers.get("authorization"))
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+    def _paid_job_owner(request: Request, job_id: str):
+        paid = credit_service.paid_job(job_id)
+        if paid is not None and _wallet(request) != paid["wallet"]:
+            raise HTTPException(status_code=404, detail="Unknown job.")
+        return paid
+
+    def _orb_service() -> OrbAIService:
+        return orb_ai_service or OrbAIService(provider, _make_config("ai").analyzer.resolved_model())
 
     @app.on_event("startup")
     async def mark_startup_complete() -> None:
@@ -252,9 +345,25 @@ def create_app(
     def _make_config(job_id: str) -> PrometheusConfig:
         config = PrometheusConfig()
         config.analyzer.provider = provider
-        config.analyzer.model = model
+        config.analyzer.model = model or ("gemini-3.8-flash" if provider == "gemini" else None)
         config.output.directory = output_root / job_id
         return config
+
+    def _fingerprint_file(path: Path, operation: str) -> str:
+        with path.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        return hashlib.sha256(f"{operation}:{digest}".encode()).hexdigest()
+
+    def _reserve_paid(wallet: str | None, request: Request, operation: str,
+                      fingerprint: str, job: Job) -> tuple[str, bool]:
+        if wallet is None:
+            return job.id, True
+        try:
+            return credit_service.reserve(wallet, operation,
+                                          request.headers.get("x-orb-idempotency-key", ""),
+                                          fingerprint, job.id)
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
     def _run_job(job: Job, video_path: Path) -> None:
         def _progress(stage: str) -> None:
@@ -306,22 +415,24 @@ def create_app(
         finally:
             video_path.unlink(missing_ok=True)
 
-    async def _save_upload(file: UploadFile) -> tuple[str, Path]:
+    async def _save_upload(file: UploadFile, allow_images: bool = False) -> tuple[str, Path]:
         filename = file.filename or ""
-        if not filename.lower().endswith(_ALLOWED_EXTENSIONS):
-            raise HTTPException(status_code=400, detail="Unsupported file type. Upload an MP4 video.")
+        allowed = _ALLOWED_EXTENSIONS + (_IMAGE_EXTENSIONS if allow_images else ())
+        if Path(filename).suffix.lower() not in allowed:
+            raise HTTPException(status_code=400, detail="Unsupported file type. Use JPEG, PNG, WebP, MP4, MOV, M4V, or WebM.")
         suffix = Path(filename).suffix.lower()
+        limit = _MAX_IMAGE_BYTES if suffix in _IMAGE_EXTENSIONS else max_upload_bytes
         destination = upload_root / f"{uuid.uuid4().hex}{suffix}"
         size = 0
         try:
             with destination.open("wb") as out:
                 while chunk := await file.read(1024 * 1024):
                     size += len(chunk)
-                    if size > max_upload_bytes:
-                        limit_mb = max_upload_bytes / 1024 / 1024
+                    if size > limit:
+                        limit_mb = limit / 1024 / 1024
                         raise HTTPException(
                             status_code=413,
-                            detail=f"Video exceeds the {limit_mb:g} MB limit.",
+                            detail=f"File exceeds the {limit_mb:g} MB limit.",
                         )
                     out.write(chunk)
         except BaseException:
@@ -345,6 +456,24 @@ def create_app(
             destination.unlink(missing_ok=True)
             raise HTTPException(status_code=503, detail=f"Video validation is unavailable: {exc}")
 
+    async def _validate_orb_media(destination: Path) -> dict[str, Any]:
+        if destination.suffix.lower() not in _IMAGE_EXTENSIONS:
+            await _validate_upload(destination)
+            return {"kind": "video"}
+        try:
+            from PIL import Image, UnidentifiedImageError
+
+            with Image.open(destination) as image:
+                width, height = image.size
+                expected = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}[destination.suffix.lower()]
+                if image.format != expected or width < 1 or height < 1 or width * height > 32_000_000:
+                    raise ValueError("Image type or dimensions are invalid.")
+                image.verify()
+            return {"kind": "image", "width": width, "height": height}
+        except (UnidentifiedImageError, Image.DecompressionBombError, ValueError, OSError) as exc:
+            destination.unlink(missing_ok=True)
+            raise HTTPException(status_code=422, detail="Invalid image file or dimensions.") from exc
+
     @app.get("/api/health")
     def health() -> dict:
         analyzer_config = _make_config("health").analyzer
@@ -356,7 +485,60 @@ def create_app(
                 "model": analyzer_config.resolved_model(),
             },
             "payment_required": require_payment,
+            "orb_ai_access": (
+                "local" if provider != "mock" and _provider_is_ready(provider)
+                and os.environ.get("ORB_ENV") == "local"
+                and os.environ.get("ORB_AI_LOCAL_TESTING") == "1"
+                else "configuration_required" if provider == "mock" or not _provider_is_ready(provider)
+                else "credits" if credit_service.config.ready
+                else "credits_unavailable"
+            ),
         }
+
+    @app.get("/api/orb/credits/config")
+    def orb_credit_config() -> dict:
+        return {"enabled": credit_service.config.ready and provider != "mock" and _provider_is_ready(provider),
+                "chain_id": CHAIN_ID,
+                "network": "Arbitrum Sepolia", "testnet_only": True,
+                "price_wei": str(credit_service.config.price_wei),
+                "credit_options": [1, 3, 5], "confirmations": credit_service.config.confirmations}
+
+    @app.post("/api/orb/wallet/challenge")
+    def orb_wallet_challenge(request: Request, payload: dict) -> dict:
+        try:
+            return credit_service.challenge(payload.get("address", ""), request.headers.get("origin"))
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+    @app.post("/api/orb/wallet/sign-in")
+    def orb_wallet_sign_in(request: Request, payload: dict) -> dict:
+        try:
+            return credit_service.sign_in(payload.get("nonce", ""), payload.get("signature", ""),
+                                          request.headers.get("origin"))
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+    @app.get("/api/orb/credits/balance")
+    def orb_credit_balance(request: Request) -> dict:
+        return credit_service.balance(_wallet(request))
+
+    @app.post("/api/orb/credits/quotes")
+    def orb_credit_quote(request: Request, payload: dict) -> dict:
+        wallet = _wallet(request, mutating=True)
+        if provider == "mock" or not _provider_is_ready(provider):
+            raise HTTPException(status_code=503, detail="Orb AI is not configured for testnet credits.")
+        try:
+            return credit_service.create_quote(wallet, payload.get("credits"))
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+    @app.post("/api/orb/credits/quotes/{quote_id}/verify")
+    def orb_credit_verify(request: Request, quote_id: str, payload: dict) -> dict:
+        wallet = _wallet(request, mutating=True)
+        try:
+            return credit_service.verify_purchase(wallet, quote_id, payload.get("tx_hash", ""))
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
     @app.get("/api/ready")
     def ready() -> dict:
@@ -390,7 +572,7 @@ def create_app(
 
     @app.get("/api/payments/config")
     def payment_config() -> dict:
-        if payment_service is None:
+        if not payments_enabled or payment_service is None:
             raise HTTPException(status_code=503, detail="Payments are not enabled in this build.")
         config = payment_service.public_config()
         config["enabled"] = bool(require_payment and _provider_is_ready(provider))
@@ -398,7 +580,7 @@ def create_app(
 
     @app.post("/api/payments/quotes")
     def create_payment_quote(payload: dict | None = None) -> dict:
-        if not require_payment or not _provider_is_ready(provider):
+        if not payments_enabled or not require_payment or not _provider_is_ready(provider):
             raise HTTPException(status_code=503, detail="Advanced AI analysis is not configured.")
         source_job_id = payload.get("source_job_id") if isinstance(payload, dict) else None
         source_job = manager.get(source_job_id) if isinstance(source_job_id, str) else None
@@ -410,7 +592,7 @@ def create_app(
 
     @app.post("/api/payments/quotes/{quote_id}/verify")
     def verify_payment_quote(quote_id: str, payload: dict) -> dict:
-        if payment_service is None:
+        if not payments_enabled or payment_service is None:
             raise HTTPException(status_code=503, detail="Payments are not enabled in this build.")
         tx_hash = payload.get("tx_hash") if isinstance(payload, dict) else None
         if tx_hash is not None and not isinstance(tx_hash, str):
@@ -424,6 +606,8 @@ def create_app(
 
     @app.post("/api/uploads", status_code=201)
     async def stage_upload(file: UploadFile = File(...)) -> dict:
+        if public_mode:
+            raise HTTPException(status_code=404, detail="Unknown operation.")
         filename, destination = await _save_upload(file)
         await _validate_upload(destination)
         _cleanup_staged_uploads()
@@ -438,6 +622,8 @@ def create_app(
 
     @app.post("/api/inspect", status_code=202)
     async def inspect(file: UploadFile = File(...)) -> dict:
+        if public_mode:
+            raise HTTPException(status_code=404, detail="Unknown operation.")
         filename, destination = await _save_upload(file)
         await _validate_upload(destination)
         job = manager.create(
@@ -448,14 +634,149 @@ def create_app(
         manager.submit(job.id, lambda: _run_basic_job(job, destination))
         return {"job_id": job.id}
 
+    def _run_orb_visual_job(job: Job, source: Path, media: dict[str, Any], operation: str,
+                            wallet: str | None = None) -> None:
+        try:
+            manager.update(job.id, stage="Analyzing visual reference")
+            if media["kind"] == "video":
+                config = _make_config(job.id)
+                pipeline = PrometheusPipeline(config=config)
+                result = pipeline.run(source, progress=lambda stage: manager.update(job.id, stage=stage))
+                run_dir = result.output.run_dir
+                analysis = result.report.to_dict()
+                if operation == "decode":
+                    payload = {"prompt": video_generation_prompt(result.prompt), "visual_analysis": _visual_from_report(analysis),
+                               "refinements": []}
+                else:
+                    manager.update(job.id, stage="Composing prompt")
+                    payload = _orb_service().compose_video(analysis)
+                payload["video"] = build_result_dto(job.id, run_dir, job.video_name, job.source_file)["video"]
+                payload["scenes"] = build_result_dto(job.id, run_dir, job.video_name, job.source_file)["scenes"]
+            else:
+                manager.update(job.id, stage="Analyzing image")
+                payload = _orb_service().image(operation, source)
+                run_dir = output_root / job.id
+                run_dir.mkdir(parents=True, exist_ok=True)
+                payload["image"] = {
+                    "name": job.video_name, "width": media["width"], "height": media["height"],
+                    "preview_url": f"/api/jobs/{job.id}/frames/{job.source_file}",
+                }
+            shutil.copyfile(source, run_dir / job.source_file)
+            payload.update({"job_id": job.id, "operation": operation,
+                            "notice": "The exact original creator prompt cannot be guaranteed." if operation == "decode" else
+                            "A new prompt inspired by the reference, not its original instructions.",
+                            "provider": provider})
+            _write_orb_result(run_dir, payload)
+            manager.update(job.id, run_dir=run_dir, state="complete", stage="Complete")
+            if wallet is not None:
+                credit_service.settle(job.id, True)
+        except Exception:
+            shutil.rmtree(output_root / job.id, ignore_errors=True)
+            if wallet is not None:
+                credit_service.settle(job.id, False)
+            _LOG.exception("Orb %s job failed", operation)
+            raise
+        finally:
+            source.unlink(missing_ok=True)
+
+    @app.post("/api/orb/{operation}/file", status_code=202)
+    async def orb_visual(operation: str, request: Request, file: UploadFile = File(...)) -> dict:
+        if operation not in {"decode", "compose"}:
+            raise HTTPException(status_code=404, detail="Unknown operation.")
+        wallet = _authorize_ai(request)
+        filename, destination = await _save_upload(file, allow_images=True)
+        media = await _validate_orb_media(destination)
+        job = manager.create(filename, tier=operation, source_file=f"source{destination.suffix.lower()}")
+        try:
+            fingerprint = _fingerprint_file(destination, operation) if wallet is not None else ""
+            reserved_job_id, is_new = _reserve_paid(wallet, request, operation, fingerprint, job)
+            if not is_new:
+                manager.remove(job.id)
+                destination.unlink(missing_ok=True)
+                return {"job_id": reserved_job_id}
+            manager.submit(job.id, lambda: _run_orb_visual_job(job, destination, media, operation, wallet))
+        except Exception:
+            if wallet is not None:
+                credit_service.settle(job.id, False)
+            manager.remove(job.id)
+            destination.unlink(missing_ok=True)
+            raise
+        return {"job_id": job.id}
+
+    @app.post("/api/orb/enhance", status_code=202)
+    async def orb_enhance(request: Request, payload: dict) -> dict:
+        wallet = _authorize_ai(request)
+        prompt = payload.get("prompt") if isinstance(payload, dict) else None
+        output = payload.get("output", "image") if isinstance(payload, dict) else None
+        style = payload.get("style", "") if isinstance(payload, dict) else None
+        detail = payload.get("detail", "balanced") if isinstance(payload, dict) else None
+        if not isinstance(prompt, str) or not 3 <= len(prompt.strip()) <= 4000:
+            raise HTTPException(status_code=422, detail="Prompt must contain 3–4000 characters.")
+        if output not in {"image", "video"} or detail not in {"concise", "balanced", "detailed"}:
+            raise HTTPException(status_code=422, detail="Invalid output or detail preference.")
+        if not isinstance(style, str) or len(style) > 80:
+            raise HTTPException(status_code=422, detail="Style must be at most 80 characters.")
+        job = manager.create("Text prompt", tier="enhance")
+        fingerprint = hashlib.sha256(json.dumps(
+            {"prompt": prompt.strip(), "output": output, "style": style.strip(), "detail": detail},
+            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        try:
+            reserved_job_id, is_new = _reserve_paid(wallet, request, "enhance", fingerprint, job)
+        except Exception:
+            manager.remove(job.id)
+            raise
+        if not is_new:
+            manager.remove(job.id)
+            return {"job_id": reserved_job_id}
+
+        def run() -> None:
+            manager.update(job.id, stage="Enhancing prompt")
+            try:
+                enhanced = _orb_service().enhance(prompt.strip(), output, style.strip(), detail)
+                run_dir = output_root / job.id
+                run_dir.mkdir(parents=True, exist_ok=True)
+                result = {"job_id": job.id, "operation": "enhance", "original_prompt": prompt.strip(),
+                          "prompt": enhanced, "output": output, "style": style.strip(), "detail": detail,
+                          "provider": provider}
+                _write_orb_result(run_dir, result)
+                manager.update(job.id, run_dir=run_dir, state="complete", stage="Complete")
+                if wallet is not None:
+                    credit_service.settle(job.id, True)
+            except Exception:
+                shutil.rmtree(output_root / job.id, ignore_errors=True)
+                if wallet is not None:
+                    credit_service.settle(job.id, False)
+                _LOG.exception("Orb enhance job failed")
+                raise
+
+        try:
+            manager.submit(job.id, run)
+        except Exception:
+            if wallet is not None:
+                credit_service.settle(job.id, False)
+            manager.remove(job.id)
+            raise
+        return {"job_id": job.id}
+
     @app.post("/api/analyze", status_code=202)
     async def analyze(
+        request: Request,
         file: UploadFile | None = File(default=None),
         upload_id: str | None = Form(default=None),
         source_job_id: str | None = Form(default=None),
         payment_quote_id: str | None = Form(default=None),
         payment_token: str | None = Form(default=None),
     ) -> dict:
+        if public_mode:
+            raise HTTPException(status_code=404, detail="Unknown operation.")
+        if require_payment and not payments_enabled:
+            raise HTTPException(status_code=402, detail="AI operations require verified Orb credits. Payments are not available yet.")
+        if provider != "mock" and not require_payment:
+            if not _local_ai_allowed(request):
+                raise HTTPException(status_code=402, detail="Legacy analysis is available only in explicit local testing.")
+            _authorize_ai(request)
+        if provider == "mock" and not require_payment and not _local_ai_allowed(request):
+            raise HTTPException(status_code=402, detail="AI operations require verified credits. Payments are not available yet.")
         if require_payment:
             source_job = manager.get(source_job_id) if source_job_id else None
             if source_job is None or source_job.tier != "basic" or source_job.state != "complete":
@@ -522,25 +843,49 @@ def create_app(
         return {"job_id": job.id}
 
     @app.get("/api/jobs/{job_id}")
-    def job_status(job_id: str) -> dict:
+    def job_status(request: Request, job_id: str) -> dict:
+        paid = _paid_job_owner(request, job_id)
         job = manager.get(job_id)
         if job is None:
-            raise HTTPException(status_code=404, detail="Unknown job.")
-        return manager.public_info(job)
+            if paid is None:
+                raise HTTPException(status_code=404, detail="Unknown job.")
+            state = "complete" if paid["status"] == "consumed" and (output_root / job_id / "orb_result.json").is_file() else (
+                "error" if paid["status"] == "released" else "processing")
+            return {"id": job_id, "state": state, "tier": paid["operation"],
+                    "stage": "Complete" if state == "complete" else "Interrupted",
+                    "error": "AI processing failed. Try again with a new request." if state == "error" else None}
+        info = manager.public_info(job)
+        if paid and paid["status"] == "reserved" and info["state"] == "complete":
+            info["state"] = "processing"
+            info["stage"] = "Finalizing testnet credit"
+        if job.tier in {"decode", "compose", "enhance"} and info["state"] == "error":
+            info["error"] = "AI processing failed. Check the server configuration or try again."
+        return info
 
     @app.get("/api/jobs/{job_id}/result")
-    def job_result(job_id: str) -> dict:
+    def job_result(request: Request, job_id: str) -> dict:
+        paid = _paid_job_owner(request, job_id)
         job = manager.get(job_id)
+        if paid and paid["status"] != "consumed":
+            raise HTTPException(status_code=409 if paid["status"] == "reserved" else 502,
+                                detail="AI processing is incomplete or failed.")
         if job is None:
+            if paid and paid["status"] == "consumed":
+                result_path = output_root / job_id / "orb_result.json"
+                if result_path.is_file():
+                    return json.loads(result_path.read_text(encoding="utf-8"))
             raise HTTPException(status_code=404, detail="Unknown job.")
         if job.state == "error":
-            raise HTTPException(status_code=502, detail=job.error or "Analysis failed.")
+            detail = "AI processing failed. Check the server configuration or try again." if job.tier in {"decode", "compose", "enhance"} else job.error or "Analysis failed."
+            raise HTTPException(status_code=502, detail=detail)
         if job.state != "complete" and job.run_dir is None:
             raise HTTPException(status_code=409, detail="Analysis is still running.")
         if job.tier == "basic":
             return build_basic_result_dto(
                 job.id, job.run_dir, job.video_name, job.source_file
             )
+        if job.tier in {"decode", "compose", "enhance"}:
+            return json.loads((job.run_dir / "orb_result.json").read_text(encoding="utf-8"))
         return build_result_dto(job.id, job.run_dir, job.video_name, job.source_file)
 
     @app.post("/api/jobs/{job_id}/remix")
@@ -570,11 +915,13 @@ def create_app(
         return {"applied": applied, "prompt_markdown": prompt_markdown}
 
     @app.get("/api/jobs/{job_id}/frames/{file_path:path}")
-    def job_frame(job_id: str, file_path: str) -> FileResponse:
+    def job_frame(request: Request, job_id: str, file_path: str) -> FileResponse:
+        paid = _paid_job_owner(request, job_id)
         job = manager.get(job_id)
-        if job is None or job.run_dir is None:
+        run_dir = job.run_dir if job else (output_root / job_id if paid and paid["status"] == "consumed" else None)
+        if run_dir is None:
             raise HTTPException(status_code=404, detail="Frames not available.")
-        base = job.run_dir.resolve()
+        base = run_dir.resolve()
         target = (base / file_path).resolve()
         if not target.is_relative_to(base):
             raise HTTPException(status_code=400, detail="Invalid frame path.")
@@ -582,8 +929,13 @@ def create_app(
             raise HTTPException(status_code=404, detail="Frame not found.")
         return FileResponse(target)
 
-    static_dir = _BUILT_WEB_DIR if _BUILT_WEB_DIR.is_dir() else _WEB_DIR
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="web")
+    if public_mode:
+        @app.get("/")
+        def api_root() -> dict:
+            return {"service": "Orb API"}
+    else:
+        static_dir = _BUILT_WEB_DIR if _BUILT_WEB_DIR.is_dir() else _WEB_DIR
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="web")
     return app
 
 

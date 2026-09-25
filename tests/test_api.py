@@ -472,7 +472,7 @@ def test_result_before_completion_returns_409(client, synthetic_video):
 def test_web_index_served(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert "ORB" in response.text
+    assert '<span class="wordmark">Orb</span>' in response.text
 
 
 def test_configured_cors_allows_the_deployed_frontend(monkeypatch, tmp_path):
@@ -547,17 +547,8 @@ def test_gemini_without_key_fails_without_mock(monkeypatch, tmp_path, synthetic_
         "/api/analyze",
         files={"file": ("video.mp4", synthetic_video.read_bytes(), "video/mp4")},
     )
-    assert response.status_code == 202
-    job_id = response.json()["job_id"]
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        job = keyless.get(f"/api/jobs/{job_id}").json()
-        if job["state"] != "processing":
-            break
-        time.sleep(0.3)
-    assert job["state"] == "error"
-    assert "API key" in (job["error"] or "")
-    assert keyless.get(f"/api/jobs/{job_id}/result").status_code == 502
+    assert response.status_code == 503
+    assert "server-side API key" in response.json()["detail"]
 
 
 def test_ai_failure_retries_same_paid_job(monkeypatch, tmp_path, synthetic_video):

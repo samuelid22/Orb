@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
+
+# The module-level FastAPI app now rejects an unspecified public environment.
+# Tests explicitly start from the local mode before importing API modules.
+os.environ["ORB_ENV"] = "local"
 
 from prometheus.video.tools import resolve_tool
 
@@ -15,6 +20,8 @@ def _enable_inherited_payments_for_tests(monkeypatch):
     explicitly here. Production Orb runs must never set this flag.
     """
     monkeypatch.setenv("ORB_ENABLE_NIMIQ_PAYMENTS", "1")
+    monkeypatch.setenv("ORB_ENV", "local")
+    monkeypatch.setenv("ORB_AI_LOCAL_TESTING", "1")
 
 
 def _run_ffmpeg(args: list[str]) -> None:

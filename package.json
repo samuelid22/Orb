@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite --host 0.0.0.0",
+    "build:vercel": "node scripts/check-vercel-env.mjs && vite build",
+    "dev": "vite",
     "test:web": "vitest run"
   },
   "devDependencies": {

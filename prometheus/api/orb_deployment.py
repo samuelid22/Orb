@@ -1,4 +1,4 @@
-"""Fail-closed checks for Orb's single-instance public deployment."""
+"""Fail-closed checks for Orb's Postgres-backed public deployment."""
 
 from __future__ import annotations
 
@@ -6,9 +6,11 @@ import os
 from pathlib import Path
 from urllib.parse import urlparse
 
+from prometheus.api.orb_database import validate_postgres_url
 
-def validate_public_deployment(output_root: Path, upload_root: Path, credit_db: Path) -> None:
-    """Reject public startup unless paid access and durable job state are explicit."""
+
+def validate_public_deployment(upload_root: Path, database_url: str) -> None:
+    """Reject public startup unless paid access and Postgres are explicit."""
     mode = os.environ.get("ORB_ENV")
     if mode == "local":
         return
@@ -28,19 +30,18 @@ def validate_public_deployment(output_root: Path, upload_root: Path, credit_db: 
 
     origin = os.environ.get("ORB_PUBLIC_ORIGIN", "")
     parsed = urlparse(origin)
-    if (parsed.scheme != "https" or not parsed.netloc or parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+            or parsed.hostname in {"localhost", "127.0.0.1", "::1"}
             or origin != f"{parsed.scheme}://{parsed.netloc}"):
         raise RuntimeError("Production requires the exact HTTPS Orb frontend origin.")
 
-    root_value = os.environ.get("ORB_DATA_DIR", "")
-    root = Path(root_value)
-    if not root_value or not root.is_absolute() or not root.is_dir() or not os.path.ismount(root):
-        raise RuntimeError("Production requires an attached persistent disk at ORB_DATA_DIR.")
-    root = root.resolve()
-    if not os.environ.get("ORB_OUTPUT_DIR") or not output_root.is_relative_to(root) or output_root == root:
-        raise RuntimeError("ORB_OUTPUT_DIR must be inside the attached persistent disk.")
-    if not os.environ.get("ORB_CREDIT_DB") or not credit_db.is_relative_to(root):
-        raise RuntimeError("ORB_CREDIT_DB must be inside the attached persistent disk.")
+    if not database_url:
+        raise RuntimeError("Production requires ORB_DATABASE_URL for the Postgres ledger and results.")
+    try:
+        validate_postgres_url(database_url)
+    except ValueError:
+        raise RuntimeError("Production requires a valid TLS Postgres ORB_DATABASE_URL.") from None
+
     upload_value = os.environ.get("ORB_UPLOAD_DIR", "")
-    if not upload_value or not Path(upload_value).is_absolute() or upload_root.is_relative_to(root):
-        raise RuntimeError("ORB_UPLOAD_DIR must be an absolute temporary path outside the persistent disk.")
+    if not upload_value or not Path(upload_value).is_absolute() or not upload_root.is_absolute():
+        raise RuntimeError("ORB_UPLOAD_DIR must be an absolute temporary path.")

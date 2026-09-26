@@ -82,26 +82,6 @@ def _storage_path(value: Path | str) -> Path:
     return (path if path.is_absolute() else _ROOT_DIR / path).resolve()
 
 
-def _write_orb_result(run_dir: Path, payload: dict[str, Any]) -> None:
-    """Publish a complete result before a reserved credit can be consumed."""
-    destination = run_dir / "orb_result.json"
-    temporary = run_dir / f".orb_result.{uuid.uuid4().hex}.tmp"
-    try:
-        with temporary.open("x", encoding="utf-8") as result_file:
-            json.dump(payload, result_file, ensure_ascii=False)
-            result_file.flush()
-            os.fsync(result_file.fileno())
-        os.replace(temporary, destination)
-        if os.name != "nt":
-            directory_fd = os.open(run_dir, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
 def _cors_origins(value: str | None) -> list[str]:
     return [origin.strip().rstrip("/") for origin in (value or "").split(",") if origin.strip()]
 
@@ -183,16 +163,21 @@ def create_app(
 ) -> FastAPI:
     provider = provider or os.environ.get("ORB_AI_PROVIDER") or _resolve_provider()
     model = model or os.environ.get("ORB_AI_MODEL")
+    public_mode = os.environ.get("ORB_ENV") == "production"
+    output_default = "/tmp/orb_output" if public_mode else "api_output"
+    upload_default = "/tmp/orb_uploads" if public_mode else "uploads"
     output_root = _storage_path(output_dir or os.environ.get("ORB_OUTPUT_DIR")
-                                or os.environ.get("PROMETHEUS_API_OUTPUT_DIR", "api_output"))
+                                or (output_default if public_mode else os.environ.get("PROMETHEUS_API_OUTPUT_DIR", output_default)))
     upload_root = _storage_path(upload_dir or os.environ.get("ORB_UPLOAD_DIR")
-                                or os.environ.get("PROMETHEUS_API_UPLOAD_DIR", "uploads"))
+                                or (upload_default if public_mode else os.environ.get("PROMETHEUS_API_UPLOAD_DIR", upload_default)))
+    database_url = os.environ.get("ORB_DATABASE_URL", "")
     credit_db = _storage_path(os.environ.get("ORB_CREDIT_DB", str(output_root / "orb_credits.sqlite3")))
-    validate_public_deployment(output_root, upload_root, credit_db)
+    validate_public_deployment(upload_root, database_url)
     output_root.mkdir(parents=True, exist_ok=True)
     upload_root.mkdir(parents=True, exist_ok=True)
     credit_service = orb_credit_service or CreditService(CreditConfig(
         database=credit_db,
+        database_url=database_url if public_mode else "",
         public_origin=os.environ.get("ORB_PUBLIC_ORIGIN", "").rstrip("/"),
         rpc_url=os.environ.get("ORB_ARBITRUM_RPC_URL", ""),
         receiver=os.environ.get("ORB_CREDIT_RECEIVER", ""),
@@ -200,8 +185,10 @@ def create_app(
         confirmations=int(os.environ.get("ORB_PAYMENT_CONFIRMATIONS", "3")),
         enabled=os.environ.get("ORB_CREDITS_ENABLED") == "1",
     ))
+    if public_mode and (not credit_service.database.postgres
+                        or credit_service.config.database_url != database_url):
+        raise RuntimeError("Production requires the configured Orb Postgres credit and result store.")
     credit_service.reconcile(output_root)
-    public_mode = os.environ.get("ORB_ENV") == "production"
     # Orb isolation: the inherited Nimiq payment code stays dormant unless it
     # is explicitly enabled for development. Orb will use a separate
     # Arbitrum-based payment system in a later stage; nothing may depend on
@@ -287,6 +274,17 @@ def create_app(
         if paid is not None and _wallet(request) != paid["wallet"]:
             raise HTTPException(status_code=404, detail="Unknown job.")
         return paid
+
+    def _recover_paid_result(job_id: str, paid):
+        if paid is None:
+            return None, None
+        saved = credit_service.result(job_id, output_root)
+        if (paid["status"] == "reserved" and isinstance(saved, dict)
+                and saved.get("job_id") == job_id
+                and isinstance(saved.get("prompt"), str) and saved["prompt"].strip()):
+            credit_service.settle(job_id, True)
+            paid = credit_service.paid_job(job_id)
+        return saved, paid
 
     def _orb_service() -> OrbAIService:
         return orb_ai_service or OrbAIService(provider, _make_config("ai").analyzer.resolved_model())
@@ -636,6 +634,7 @@ def create_app(
 
     def _run_orb_visual_job(job: Job, source: Path, media: dict[str, Any], operation: str,
                             wallet: str | None = None) -> None:
+        result_saved = False
         try:
             manager.update(job.id, stage="Analyzing visual reference")
             if media["kind"] == "video":
@@ -650,8 +649,9 @@ def create_app(
                 else:
                     manager.update(job.id, stage="Composing prompt")
                     payload = _orb_service().compose_video(analysis)
-                payload["video"] = build_result_dto(job.id, run_dir, job.video_name, job.source_file)["video"]
-                payload["scenes"] = build_result_dto(job.id, run_dir, job.video_name, job.source_file)["scenes"]
+                video_result = build_result_dto(job.id, run_dir, job.video_name, job.source_file)
+                payload["video"] = video_result["video"]
+                payload["scenes"] = video_result["scenes"]
             else:
                 manager.update(job.id, stage="Analyzing image")
                 payload = _orb_service().image(operation, source)
@@ -661,23 +661,42 @@ def create_app(
                     "name": job.video_name, "width": media["width"], "height": media["height"],
                     "preview_url": f"/api/jobs/{job.id}/frames/{job.source_file}",
                 }
-            shutil.copyfile(source, run_dir / job.source_file)
+            if not public_mode:
+                shutil.copyfile(source, run_dir / job.source_file)
+            else:
+                # Production retains prompt/analysis JSON in Postgres, not media.
+                if "video" in payload:
+                    payload["video"].pop("preview_url", None)
+                    payload["scenes"] = [
+                        {"index": scene["index"], "start": scene["start"], "end": scene["end"],
+                         "duration": scene["duration"], "description": scene["description"],
+                         "frames": []}
+                        for scene in payload["scenes"]
+                    ]
+                if "image" in payload:
+                    payload["image"].pop("preview_url", None)
             payload.update({"job_id": job.id, "operation": operation,
                             "notice": "The exact original creator prompt cannot be guaranteed." if operation == "decode" else
                             "A new prompt inspired by the reference, not its original instructions.",
                             "provider": provider})
-            _write_orb_result(run_dir, payload)
-            manager.update(job.id, run_dir=run_dir, state="complete", stage="Complete")
+            credit_service.save_result(job.id, payload, output_root / job.id)
+            result_saved = True
             if wallet is not None:
                 credit_service.settle(job.id, True)
+            manager.update(job.id, run_dir=None if public_mode else run_dir, state="complete", stage="Complete")
         except Exception:
-            shutil.rmtree(output_root / job.id, ignore_errors=True)
-            if wallet is not None:
-                credit_service.settle(job.id, False)
+            if not result_saved:
+                shutil.rmtree(output_root / job.id, ignore_errors=True)
+                if wallet is not None:
+                    credit_service.settle(job.id, False)
+            # A durable result remains reserved for restart reconciliation if
+            # settlement itself failed. Never release a completed paid result.
             _LOG.exception("Orb %s job failed", operation)
             raise
         finally:
             source.unlink(missing_ok=True)
+            if public_mode:
+                shutil.rmtree(output_root / job.id, ignore_errors=True)
 
     @app.post("/api/orb/{operation}/file", status_code=202)
     async def orb_visual(operation: str, request: Request, file: UploadFile = File(...)) -> dict:
@@ -731,6 +750,7 @@ def create_app(
 
         def run() -> None:
             manager.update(job.id, stage="Enhancing prompt")
+            result_saved = False
             try:
                 enhanced = _orb_service().enhance(prompt.strip(), output, style.strip(), detail)
                 run_dir = output_root / job.id
@@ -738,16 +758,21 @@ def create_app(
                 result = {"job_id": job.id, "operation": "enhance", "original_prompt": prompt.strip(),
                           "prompt": enhanced, "output": output, "style": style.strip(), "detail": detail,
                           "provider": provider}
-                _write_orb_result(run_dir, result)
-                manager.update(job.id, run_dir=run_dir, state="complete", stage="Complete")
+                credit_service.save_result(job.id, result, output_root / job.id)
+                result_saved = True
                 if wallet is not None:
                     credit_service.settle(job.id, True)
+                manager.update(job.id, run_dir=None if public_mode else run_dir, state="complete", stage="Complete")
             except Exception:
-                shutil.rmtree(output_root / job.id, ignore_errors=True)
-                if wallet is not None:
-                    credit_service.settle(job.id, False)
+                if not result_saved:
+                    shutil.rmtree(output_root / job.id, ignore_errors=True)
+                    if wallet is not None:
+                        credit_service.settle(job.id, False)
                 _LOG.exception("Orb enhance job failed")
                 raise
+            finally:
+                if public_mode:
+                    shutil.rmtree(output_root / job.id, ignore_errors=True)
 
         try:
             manager.submit(job.id, run)
@@ -845,12 +870,15 @@ def create_app(
     @app.get("/api/jobs/{job_id}")
     def job_status(request: Request, job_id: str) -> dict:
         paid = _paid_job_owner(request, job_id)
+        saved, paid = _recover_paid_result(job_id, paid)
         job = manager.get(job_id)
+        if paid and paid["status"] == "consumed" and saved:
+            return {"id": job_id, "state": "complete", "tier": paid["operation"],
+                    "stage": "Complete", "error": None}
         if job is None:
             if paid is None:
                 raise HTTPException(status_code=404, detail="Unknown job.")
-            state = "complete" if paid["status"] == "consumed" and (output_root / job_id / "orb_result.json").is_file() else (
-                "error" if paid["status"] == "released" else "processing")
+            state = "error" if paid["status"] == "released" else "processing"
             return {"id": job_id, "state": state, "tier": paid["operation"],
                     "stage": "Complete" if state == "complete" else "Interrupted",
                     "error": "AI processing failed. Try again with a new request." if state == "error" else None}
@@ -865,15 +893,14 @@ def create_app(
     @app.get("/api/jobs/{job_id}/result")
     def job_result(request: Request, job_id: str) -> dict:
         paid = _paid_job_owner(request, job_id)
+        durable_result, paid = _recover_paid_result(job_id, paid)
         job = manager.get(job_id)
         if paid and paid["status"] != "consumed":
             raise HTTPException(status_code=409 if paid["status"] == "reserved" else 502,
                                 detail="AI processing is incomplete or failed.")
+        if paid and paid["status"] == "consumed" and durable_result is not None:
+            return durable_result
         if job is None:
-            if paid and paid["status"] == "consumed":
-                result_path = output_root / job_id / "orb_result.json"
-                if result_path.is_file():
-                    return json.loads(result_path.read_text(encoding="utf-8"))
             raise HTTPException(status_code=404, detail="Unknown job.")
         if job.state == "error":
             detail = "AI processing failed. Check the server configuration or try again." if job.tier in {"decode", "compose", "enhance"} else job.error or "Analysis failed."
@@ -885,7 +912,10 @@ def create_app(
                 job.id, job.run_dir, job.video_name, job.source_file
             )
         if job.tier in {"decode", "compose", "enhance"}:
-            return json.loads((job.run_dir / "orb_result.json").read_text(encoding="utf-8"))
+            saved = credit_service.result(job.id, output_root)
+            if saved is None:
+                raise HTTPException(status_code=503, detail="Orb result is temporarily unavailable.")
+            return saved
         return build_result_dto(job.id, job.run_dir, job.video_name, job.source_file)
 
     @app.post("/api/jobs/{job_id}/remix")
@@ -917,6 +947,8 @@ def create_app(
     @app.get("/api/jobs/{job_id}/frames/{file_path:path}")
     def job_frame(request: Request, job_id: str, file_path: str) -> FileResponse:
         paid = _paid_job_owner(request, job_id)
+        if public_mode:
+            raise HTTPException(status_code=404, detail="Temporary media is not retained.")
         job = manager.get(job_id)
         run_dir = job.run_dir if job else (output_root / job_id if paid and paid["status"] == "consumed" else None)
         if run_dir is None:

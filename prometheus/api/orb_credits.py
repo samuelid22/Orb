@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
-import sqlite3
 import time
-from contextlib import contextmanager
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +24,8 @@ from eth_account import Account
 from eth_account.messages import encode_defunct
 from eth_keys.exceptions import BadSignature
 from eth_utils import is_address, to_checksum_address
+
+from prometheus.api.orb_database import OrbDatabase
 
 
 CHAIN_ID = 421614
@@ -42,6 +44,7 @@ class CreditError(Exception):
 @dataclass(frozen=True)
 class CreditConfig:
     database: Path
+    database_url: str = ""
     public_origin: str = ""
     rpc_url: str = ""
     receiver: str = ""
@@ -87,58 +90,13 @@ class CreditService:
     def __init__(self, config: CreditConfig, rpc: RpcClient | None = None):
         self.config = config
         self.rpc = rpc or RpcClient(config.rpc_url)
-        config.database.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(config.database, timeout=15) as setup_db:
-            setup_db.execute("PRAGMA journal_mode=WAL")
-        with self._db() as db:
-            db.executescript("""
-                CREATE TABLE IF NOT EXISTS challenges (
-                    nonce TEXT PRIMARY KEY, wallet TEXT NOT NULL, message TEXT NOT NULL,
-                    expires INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE TABLE IF NOT EXISTS sessions (
-                    token_hash TEXT PRIMARY KEY, wallet TEXT NOT NULL, expires INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS balances (
-                    wallet TEXT PRIMARY KEY, granted INTEGER NOT NULL DEFAULT 0 CHECK(granted >= 0),
-                    consumed INTEGER NOT NULL DEFAULT 0 CHECK(consumed >= 0),
-                    reserved INTEGER NOT NULL DEFAULT 0 CHECK(reserved >= 0),
-                    CHECK(granted >= consumed + reserved)
-                );
-                CREATE TABLE IF NOT EXISTS quotes (
-                    id TEXT PRIMARY KEY, wallet TEXT NOT NULL, credits INTEGER NOT NULL,
-                    amount_wei INTEGER NOT NULL, tx_data TEXT NOT NULL,
-                    expires INTEGER NOT NULL, tx_hash TEXT UNIQUE
-                );
-                CREATE TABLE IF NOT EXISTS purchases (
-                    tx_hash TEXT PRIMARY KEY, quote_id TEXT NOT NULL UNIQUE,
-                    wallet TEXT NOT NULL, credits INTEGER NOT NULL, block_number INTEGER NOT NULL,
-                    granted_at INTEGER NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS reservations (
-                    job_id TEXT PRIMARY KEY, wallet TEXT NOT NULL, operation TEXT NOT NULL,
-                    idem_key TEXT NOT NULL, fingerprint TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('reserved','consumed','released')),
-                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-                    UNIQUE(wallet, idem_key)
-                );
-                CREATE INDEX IF NOT EXISTS reservations_wallet ON reservations(wallet, status);
-            """)
+        self.database = OrbDatabase(config.database, config.database_url)
 
-    @contextmanager
     def _db(self):
-        db = sqlite3.connect(self.config.database, timeout=15, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        try:
-            db.execute("PRAGMA busy_timeout=15000")
-            db.execute("PRAGMA foreign_keys=ON")
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        return self.database.session()
+
+    def _lock(self) -> str:
+        return " FOR UPDATE" if self.database.postgres else ""
 
     def _require_ready(self) -> None:
         if not self.config.ready:
@@ -169,8 +127,8 @@ class CreditService:
         if not isinstance(nonce, str) or not isinstance(signature, str) or len(signature) > 256:
             raise CreditError("Invalid wallet signature.", 401)
         with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT * FROM challenges WHERE nonce=?", (nonce,)).fetchone()
+            db.begin_write()
+            row = db.execute("SELECT * FROM challenges WHERE nonce=?" + self._lock(), (nonce,)).fetchone()
             if row is None or row["used"] or row["expires"] < time.time():
                 raise CreditError("Sign-in challenge expired or already used.", 401)
             try:
@@ -184,7 +142,7 @@ class CreditService:
             expires = int(time.time()) + 3600
             db.execute("INSERT INTO sessions VALUES (?, ?, ?)",
                        (hashlib.sha256(token.encode()).hexdigest(), row["wallet"], expires))
-            db.execute("INSERT OR IGNORE INTO balances(wallet) VALUES (?)", (row["wallet"],))
+            db.execute("INSERT INTO balances(wallet) VALUES (?) ON CONFLICT DO NOTHING", (row["wallet"],))
             db.commit()
         return {"token": token, "wallet": to_checksum_address(row["wallet"]), "expires_at": expires}
 
@@ -279,17 +237,19 @@ class CreditService:
         if not valid:
             raise CreditError("Transaction does not match this Arbitrum Sepolia quote.", 400)
         with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
-            current = db.execute("SELECT * FROM quotes WHERE id=? AND wallet=?", (quote_id, wallet)).fetchone()
+            db.begin_write()
+            current = db.execute("SELECT * FROM quotes WHERE id=? AND wallet=?" + self._lock(),
+                                 (quote_id, wallet)).fetchone()
             if current is None or current["tx_hash"]:
                 raise CreditError("Quote was already credited.", 409)
-            try:
-                db.execute("INSERT INTO purchases VALUES (?, ?, ?, ?, ?, ?)",
-                           (tx_hash, quote_id, wallet, quote["credits"], block_num, int(time.time())))
-            except sqlite3.IntegrityError as exc:
-                raise CreditError("Transaction has already been credited.", 409) from exc
+            inserted = db.execute("INSERT INTO purchases VALUES (?, ?, ?, ?, ?, ?) "
+                                  "ON CONFLICT DO NOTHING RETURNING tx_hash",
+                                  (tx_hash, quote_id, wallet, quote["credits"], block_num,
+                                   int(time.time()))).fetchone()
+            if inserted is None:
+                raise CreditError("Transaction has already been credited.", 409)
             db.execute("UPDATE quotes SET tx_hash=? WHERE id=?", (tx_hash, quote_id))
-            db.execute("INSERT OR IGNORE INTO balances(wallet) VALUES (?)", (wallet,))
+            db.execute("INSERT INTO balances(wallet) VALUES (?) ON CONFLICT DO NOTHING", (wallet,))
             db.execute("UPDATE balances SET granted=granted+? WHERE wallet=?", (quote["credits"], wallet))
             db.commit()
         return {"status": "credited", "credits": quote["credits"], "balance": self.balance(wallet)}
@@ -298,17 +258,21 @@ class CreditService:
         if not isinstance(key, str) or not IDEMPOTENCY_RE.fullmatch(key):
             raise CreditError("A valid idempotency key is required.", 400)
         with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
+            db.begin_write()
+            # Postgres locks one wallet row before reading idempotency state.
+            # SQLite's BEGIN IMMEDIATE provides the corresponding write lock.
+            if self.database.postgres:
+                db.execute("SELECT wallet FROM balances WHERE wallet=? FOR UPDATE", (wallet,)).fetchone()
             prior = db.execute("SELECT * FROM reservations WHERE wallet=? AND idem_key=?", (wallet, key)).fetchone()
             if prior:
                 if prior["operation"] != operation or prior["fingerprint"] != fingerprint:
                     raise CreditError("Idempotency key was used for different content.", 409)
                 return prior["job_id"], False
-            row = db.execute("SELECT granted, consumed, reserved FROM balances WHERE wallet=?", (wallet,)).fetchone()
-            if row is None or row["granted"] - row["consumed"] - row["reserved"] < 1:
+            updated = db.execute("UPDATE balances SET reserved=reserved+1 WHERE wallet=? "
+                                 "AND granted-consumed-reserved>=1 RETURNING wallet", (wallet,)).fetchone()
+            if updated is None:
                 raise CreditError("No testnet credits available. Connect your wallet and buy credits.", 402)
             now = int(time.time())
-            db.execute("UPDATE balances SET reserved=reserved+1 WHERE wallet=?", (wallet,))
             db.execute("INSERT INTO reservations VALUES (?, ?, ?, ?, ?, 'reserved', ?, ?)",
                        (job_id, wallet, operation, key, fingerprint, now, now))
             db.commit()
@@ -316,8 +280,9 @@ class CreditService:
 
     def settle(self, job_id: str, success: bool) -> None:
         with self._db() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT wallet, status FROM reservations WHERE job_id=?", (job_id,)).fetchone()
+            db.begin_write()
+            row = db.execute("SELECT wallet, status FROM reservations WHERE job_id=?" + self._lock(),
+                             (job_id,)).fetchone()
             if row is None or row["status"] != "reserved":
                 return
             db.execute("UPDATE balances SET reserved=reserved-1, consumed=consumed+? WHERE wallet=?",
@@ -326,21 +291,54 @@ class CreditService:
                        ("consumed" if success else "released", int(time.time()), job_id))
             db.commit()
 
-    def paid_job(self, job_id: str) -> sqlite3.Row | None:
+    def paid_job(self, job_id: str):
         with self._db() as db:
             return db.execute("SELECT wallet, operation, status FROM reservations WHERE job_id=?", (job_id,)).fetchone()
 
+    def save_result(self, job_id: str, payload: dict, run_dir: Path) -> None:
+        """Persist the full deliverable result before finalizing a reserved credit."""
+        if self.database.postgres:
+            with self._db() as db:
+                db.execute("INSERT INTO results(job_id, payload, created_at) VALUES (?, ?::jsonb, ?)",
+                           (job_id, json.dumps(payload, ensure_ascii=False), int(time.time())))
+            return
+        destination = run_dir / "orb_result.json"
+        temporary = run_dir / f".orb_result.{uuid.uuid4().hex}.tmp"
+        try:
+            with temporary.open("x", encoding="utf-8") as result_file:
+                json.dump(payload, result_file, ensure_ascii=False)
+                result_file.flush()
+                os.fsync(result_file.fileno())
+            os.replace(temporary, destination)
+            if os.name != "nt":
+                directory_fd = os.open(run_dir, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def result(self, job_id: str, output_root: Path) -> dict | None:
+        if self.database.postgres:
+            with self._db() as db:
+                row = db.execute("SELECT payload FROM results WHERE job_id=?", (job_id,)).fetchone()
+            if row is None:
+                return None
+            payload = row["payload"]
+            return json.loads(payload) if isinstance(payload, str) else payload
+        try:
+            return json.loads((output_root / job_id / "orb_result.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            return None
+
     def reconcile(self, output_root: Path) -> None:
-        # A single Orb backend instance owns this SQLite file. On restart a
-        # complete, durable result is deliverable; an interrupted job is free.
+        # Only a complete, durable result consumes a reserved credit after a
+        # restart. Production reads it from Postgres; local mode reads disk.
         with self._db() as db:
             rows = db.execute("SELECT job_id FROM reservations WHERE status='reserved'").fetchall()
         for row in rows:
-            result_path = output_root / row["job_id"] / "orb_result.json"
-            try:
-                result = json.loads(result_path.read_text(encoding="utf-8"))
-                deliverable = (isinstance(result, dict) and result.get("job_id") == row["job_id"]
-                               and isinstance(result.get("prompt"), str) and bool(result["prompt"].strip()))
-            except (OSError, ValueError, UnicodeError):
-                deliverable = False
+            result = self.result(row["job_id"], output_root)
+            deliverable = (isinstance(result, dict) and result.get("job_id") == row["job_id"]
+                           and isinstance(result.get("prompt"), str) and bool(result["prompt"].strip()))
             self.settle(row["job_id"], deliverable)

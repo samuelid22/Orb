@@ -558,3 +558,63 @@ a temporary process-only model override described below.
 - Generated pytest directories were removed before staging. Record the final
   local commit hash and clean working-tree status in the task report. No push,
   deployment, infrastructure creation, or testnet transaction was performed.
+
+
+## 2026-09-26 Stage 5.2 Supabase Postgres preparation (not deployed)
+
+- Production persistence is now direct server-side Postgres through Psycopg;
+  Render Free keeps only processing files in temporary storage. Local
+  development remains SQLite with local result files. Production startup
+  requires `ORB_DATABASE_URL`, paid credits, Gemini, an exact HTTPS browser
+  origin, and `ORB_AI_LOCAL_TESTING=0`. No persistent Render disk or
+  `ORB_DATA_DIR`/`ORB_CREDIT_DB`/`ORB_OUTPUT_DIR` production setting is
+  required. A missing or unreachable Postgres database fails startup; there
+  is no production in-memory or SQLite fallback.
+- `prometheus/api/orb_database.py` owns a versioned `orb` Postgres schema
+  and shared connection interface. The initial migration creates challenges,
+  sessions, balances, quotes, purchases, reservations, and JSONB results under
+  an advisory transaction lock. Database checks/unique constraints prevent
+  negative balances, duplicate payment grants, and duplicate idempotency
+  keys. The shared `CreditService` still verifies chain receipts, reserves
+  atomically, settles once, and releases failed jobs.
+- Completed paid result JSON is committed to Postgres before credit
+  consumption. On restart, reconciliation consumes a reserved credit only if
+  its complete matching result survives in Postgres; otherwise it releases
+  the reservation. A status/result request can also finish settlement after
+  a transient settlement failure. Public results retain prompt, analysis,
+  and compact scene metadata; source media and frames are not persisted, so
+  production preview media is unavailable after processing. Temporary
+  upload and pipeline directories are cleaned after jobs.
+- `README.md`, `.env.example`, and `requirements.txt` now document the
+  server-only Supabase Postgres URL, TLS, Psycopg, Render Free, automated
+  schema initialization, and exact manual deployment sequence. Supabase's
+  shared Session pooler is documented for IPv4 Render connectivity. Existing
+  local SQLite credits are not migrated automatically; perform an audited
+  one-time data migration if they must carry into production. No Supabase
+  project, Render service, Vercel site, or external transaction was created.
+- Validation: **175 backend tests passed**, including existing SQLite and
+  video tests plus mocked Postgres-path schema/transaction/recovery tests;
+  **16 frontend tests passed**; guarded Vercel production build passed with
+  a placeholder HTTPS API origin. The first full backend run exposed a
+  two-second asynchronous test timeout; that test was given a bounded
+  15-second deadline and the complete suite then passed. FastAPI emitted
+  98 inherited deprecation warnings. No live Postgres connection, Supabase
+  migration, live Gemini call, or real Arbitrum transaction was performed in
+  this stage. A real Supabase connection, restart recovery check, and paid
+  testnet workflow remain required after approved infrastructure creation.
+- At the end of Stage 5.2 implementation, Orb changes were uncommitted and
+  unpushed. The original Prometheus checkout, its history, and deployments
+  were not modified.
+
+## 2026-09-26 Stage 5.2 local commit audit
+
+- Reviewed the complete Orb Stage 5.2 diff and ran the full validation again:
+  **175 backend tests passed**, **16 frontend tests passed**, and the guarded
+  production frontend build passed with a placeholder HTTPS API origin.
+- The local `.env` remains ignored. The commit candidate contains no
+  configured Gemini key, RPC secret, database URL, wallet private key, seed
+  phrase, SQLite database, uploads, generated results, or runtime data.
+  Credential-shaped URLs in tests use explicit `db.example.invalid`
+  placeholders. No live Postgres or Supabase test was performed in this audit.
+- This audit prepares one local Orb commit only; no push, deployment,
+  infrastructure creation, or testnet transaction is part of this step.

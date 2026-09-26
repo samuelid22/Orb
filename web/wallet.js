@@ -76,6 +76,12 @@ export function initWallet({ onBalance }) {
     update();
   }
 
+  function requireAuthentication() {
+    clearSession("Wallet session expired. Sign again.");
+    open();
+    connectButton.focus();
+  }
+
   function scheduleExpiry(expiresAt) {
     clearTimeout(sessionTimer);
     const milliseconds = Math.max(0, expiresAt * 1000 - Date.now());
@@ -194,7 +200,7 @@ export function initWallet({ onBalance }) {
       }
       token = session.token;
       address = session.wallet;
-      verified = true;
+      verified = false;
       sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, address, expiresAt: session.expires_at }));
       scheduleExpiry(session.expires_at);
       setFeedback("Wallet authenticated for this session. Testnet credits only.");
@@ -346,7 +352,7 @@ export function initWallet({ onBalance }) {
     update();
   })();
   update();
-  return { open, close, refresh, headers, hasCredit: () => verified && balance > 0,
+  return { open, close, refresh, headers, requireAuthentication, hasCredit: () => verified && balance > 0,
     isAuthenticated: () => verified, walletAddress: () => verified ? address : null,
     isEnabled: () => !!config?.enabled };
 }

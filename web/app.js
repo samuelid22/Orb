@@ -97,6 +97,7 @@ let actionBusy = false;
 let pollTimer = null;
 let pollFailures = 0;
 let currentJobId = null;
+let pollPausedForAuth = false;
 let visualAttemptKey = null;
 let enhanceAttemptKey = null;
 let creditMode = "local";
@@ -114,16 +115,20 @@ function rememberPaidJob(jobId) {
 function forgetPaidJob() { sessionStorage.removeItem(ACTIVE_JOB_KEY); }
 
 function resumePaidJob() {
-  if (creditMode !== "credits" || !wallet?.isAuthenticated() || currentJobId || actionBusy) return;
+  if (creditMode !== "credits" || !wallet?.isAuthenticated() || actionBusy
+      || (currentJobId && !pollPausedForAuth)) return;
   try {
     const saved = JSON.parse(sessionStorage.getItem(ACTIVE_JOB_KEY) || "null");
     if (saved?.wallet?.toLowerCase() === wallet.walletAddress()?.toLowerCase()
-        && /^[a-f0-9]{32}$/.test(saved.jobId)) {
+        && /^[a-f0-9]{32}$/.test(saved.jobId)
+        && (!currentJobId || currentJobId === saved.jobId)) {
       if (["decode", "compose", "enhance"].includes(saved.mode)) currentMode = saved.mode;
       if (["image", "video"].includes(saved.mediaKind)) activeMediaKind = saved.mediaKind;
       currentJobId = saved.jobId;
       actionBusy = true;
       startPolling(currentJobId);
+    } else if (pollPausedForAuth && currentJobId) {
+      showError(els.jobError, "Sign in with the wallet that started this analysis to continue.");
     }
   } catch { forgetPaidJob(); }
 }
@@ -536,6 +541,7 @@ async function startEnhance() {
 
 function startPolling(jobId) {
   clearTimeout(pollTimer);
+  pollPausedForAuth = false;
   pollFailures = 0;
   showScreen("processing");
   els.jobError.classList.add("hidden");
@@ -548,12 +554,33 @@ function schedulePoll(jobId, ms = 1500) {
   pollTimer = setTimeout(() => pollJob(jobId), ms);
 }
 
+function pausePaidJobForAuthentication(jobId) {
+  if (jobId !== currentJobId) return;
+  clearTimeout(pollTimer);
+  pollPausedForAuth = true;
+  pollFailures = 0;
+  actionBusy = false;
+  showError(els.jobError, "Your session expired. Sign again to continue this analysis.");
+  els.backBtn.classList.remove("hidden");
+  wallet.requireAuthentication();
+  syncDecodeButton();
+}
+
 async function pollJob(jobId) {
   if (jobId !== currentJobId) return;
   let job;
   try {
+    const pollHeaders = creditMode === "credits" ? wallet.headers() : {};
     const response = await fetchWithTimeout(apiUrl(`/api/jobs/${jobId}`),
-      { headers: creditMode === "credits" ? wallet.headers() : {} });
+      { headers: pollHeaders });
+    if (response.status === 401 && creditMode === "credits") {
+      if (wallet.headers().Authorization && wallet.headers().Authorization !== pollHeaders.Authorization) {
+        schedulePoll(jobId, 0);
+      } else {
+        pausePaidJobForAuthentication(jobId);
+      }
+      return;
+    }
     if (response.status === 404 || response.status === 410) {
       discardJob();
       return;
@@ -592,6 +619,7 @@ async function pollJob(jobId) {
     currentJobId = null;
     els.backBtn.classList.remove("hidden");
     actionBusy = false;
+    if (creditMode === "credits") void wallet.refresh();
     syncDecodeButton();
   } else {
     schedulePoll(jobId);
@@ -610,8 +638,17 @@ function discardJob() {
 
 async function fetchResult(jobId) {
   try {
+    const resultHeaders = creditMode === "credits" ? wallet.headers() : {};
     const response = await fetchWithTimeout(apiUrl(`/api/jobs/${jobId}/result`),
-      { headers: creditMode === "credits" ? wallet.headers() : {} });
+      { headers: resultHeaders });
+    if (response.status === 401 && creditMode === "credits") {
+      if (wallet.headers().Authorization && wallet.headers().Authorization !== resultHeaders.Authorization) {
+        schedulePoll(jobId, 0);
+      } else {
+        pausePaidJobForAuthentication(jobId);
+      }
+      return;
+    }
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || `status ${response.status}`);
     if (jobId !== currentJobId) return;

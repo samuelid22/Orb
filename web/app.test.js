@@ -82,6 +82,66 @@ function mockApi({
   return fetchMock;
 }
 
+async function startPaidJobWithExpiredSession({ released = false } = {}) {
+  const owner = `0x${"11".repeat(20)}`;
+  const other = `0x${"22".repeat(20)}`;
+  const jobId = "a".repeat(32);
+  const handlers = new Map();
+  let selectedAccount = owner;
+  let signIns = 0;
+  let available = 1;
+  const provider = {
+    on: vi.fn((event, listener) => handlers.set(event, listener)),
+    request: vi.fn(async ({ method }) => {
+      if (method === "eth_accounts" || method === "eth_requestAccounts") return [selectedAccount];
+      if (method === "eth_chainId") return "0x66eee";
+      if (method === "personal_sign") return `0x${"cd".repeat(65)}`;
+      throw new Error(`Unexpected wallet method: ${method}`);
+    }),
+  };
+  window.ethereum = provider;
+  const fetchMock = vi.fn(async (url, options = {}) => {
+    const path = String(url);
+    if (path === "/api/orb/credits/config") return response({ enabled: true, chain_id: 421614, price_wei: "1000" });
+    if (path === "/api/health") return response({ status: "ok", orb_ai_access: "credits" });
+    if (path === "/api/ready") return response({ status: "ready" });
+    if (isUploadPingUrl(path)) return response({}, 204);
+    if (path === "/api/orb/wallet/challenge") return response({ nonce: `nonce-${signIns}`, message: "Sign in to Orb" });
+    if (path === "/api/orb/wallet/sign-in") return response({ wallet: selectedAccount,
+      token: `session-${++signIns}`, expires_at: Math.floor(Date.now() / 1000) + 3600 });
+    if (path === "/api/orb/credits/balance") return response({ wallet: selectedAccount, available });
+    if (isInspectUrl(path)) return response({ job_id: jobId }, 202);
+    if (path === `/api/jobs/${jobId}`) {
+      if (options.headers?.Authorization === "Bearer session-1") {
+        available = 0;
+        return response({ detail: "Wallet session expired. Sign again." }, 401);
+      }
+      if (selectedAccount !== owner) return response({ detail: "Unknown job." }, 404);
+      if (released) {
+        available = 1;
+        return response({ state: "error", stage: "Interrupted", error: "AI processing failed." });
+      }
+      return response({ state: "complete", stage: "Complete" });
+    }
+    if (path === `/api/jobs/${jobId}/result`) return response({ job_id: jobId, operation: "decode",
+      provider: "gemini", video: { name: "clip.mp4", duration: 2, width: 320, height: 240 },
+      scenes: [], prompt: "Recovered durable prompt.", visual_analysis: {} });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  globalThis.fetch = fetchMock;
+  await import("./app.js");
+  await flush();
+  document.getElementById("wallet-connect").click();
+  await flush();
+  chooseVideo();
+  document.getElementById("decode-btn").click();
+  await flush();
+  return { owner, other, jobId, provider, fetchMock, changeAccount(next) {
+    selectedAccount = next;
+    handlers.get("accountsChanged")?.([next]);
+  } };
+}
+
 describe("Orb frontend", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -182,6 +242,48 @@ describe("Orb frontend", () => {
     expect(request.headers["X-Orb-Idempotency-Key"]).toBeTruthy();
     expect(JSON.parse(sessionStorage.getItem("orb-active-paid-job")).jobId).toBe(paidJobId);
     expect(document.getElementById("screen-processing").classList.contains("hidden")).toBe(false);
+  });
+
+  it("pauses a paid 401 and resumes the same job and durable result after signing again", async () => {
+    const { jobId, provider, fetchMock } = await startPaidJobWithExpiredSession();
+    expect(document.getElementById("job-error").textContent).toBe(
+      "Your session expired. Sign again to continue this analysis.");
+    expect(document.getElementById("wallet-panel").classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("wallet-connect").textContent).toBe("Sign again");
+    expect(JSON.parse(sessionStorage.getItem("orb-active-paid-job")).jobId).toBe(jobId);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === `/api/jobs/${jobId}`)).toHaveLength(1);
+
+    document.getElementById("wallet-connect").click();
+    await flush();
+    expect(provider.request.mock.calls.filter(([request]) => request.method === "personal_sign")).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === `/api/jobs/${jobId}`)).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === `/api/jobs/${jobId}/result`)).toHaveLength(1);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+    expect(document.getElementById("res-prompt").textContent).toBe("Recovered durable prompt.");
+    expect(sessionStorage.getItem("orb-active-paid-job")).toBeNull();
+  });
+
+  it("keeps an expired paid job private when a different wallet signs in", async () => {
+    const { other, jobId, changeAccount, fetchMock } = await startPaidJobWithExpiredSession();
+    changeAccount(other);
+    document.getElementById("wallet-connect").click();
+    await flush();
+    expect(document.getElementById("wallet-connect").textContent).toBe("Connected");
+    expect(document.getElementById("job-error").textContent).toContain("wallet that started this analysis");
+    expect(JSON.parse(sessionStorage.getItem("orb-active-paid-job")).jobId).toBe(jobId);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === `/api/jobs/${jobId}`)).toHaveLength(1);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("refreshes the restored credit balance when a resumed paid job failed", async () => {
+    const { jobId, fetchMock } = await startPaidJobWithExpiredSession({ released: true });
+    document.getElementById("wallet-connect").click();
+    await flush();
+    expect(document.getElementById("job-error").textContent).toContain("Analysis failed");
+    expect(document.getElementById("wallet-balance").textContent).toContain("1 testnet credit available");
+    expect(sessionStorage.getItem("orb-active-paid-job")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === `/api/jobs/${jobId}`)).toHaveLength(2);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
   });
 
   it("opens a grouped menu, closes outside and on Escape, and shows About Orb", async () => {

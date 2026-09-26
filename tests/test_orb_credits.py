@@ -117,6 +117,58 @@ def test_wallet_logout_revokes_only_current_session(setup, tmp_path):
     assert service.balance(wallet.address.lower())["available"] == 1
 
 
+def test_expired_session_can_recover_only_its_wallets_saved_job(setup, tmp_path):
+    service, wallet, receiver, rpc = setup
+    grant(service, wallet, receiver, rpc, credits=1)
+    _, _, expired = sign_in(service, wallet)
+    job_id = "paid-video-job"
+    assert service.reserve(wallet.address.lower(), "decode", "a" * 32, "video-fingerprint", job_id) == (job_id, True)
+    output = tmp_path / "output"
+    run_dir = output / job_id
+    run_dir.mkdir(parents=True)
+    service.save_result(job_id, {"job_id": job_id, "prompt": "Recovered video prompt"}, run_dir)
+    with sqlite3.connect(service.config.database) as db:
+        db.execute("UPDATE sessions SET expires=0")
+
+    app = create_app(provider="mock", output_dir=output, upload_dir=tmp_path / "uploads",
+                     orb_credit_service=service)
+    _, _, renewed = sign_in(service, wallet)
+    other_wallet = Account.create()
+    _, _, other = sign_in(service, other_wallet)
+    with TestClient(app, base_url="http://localhost") as client:
+        path = f"/api/jobs/{job_id}"
+        assert client.get(path, headers={"Authorization": "Bearer " + expired["token"]}).status_code == 401
+        assert client.get(path, headers={"Authorization": "Bearer " + other["token"]}).status_code == 404
+        assert client.get(path + "/result", headers={"Authorization": "Bearer " + other["token"]}).status_code == 404
+        renewed_headers = {"Authorization": "Bearer " + renewed["token"]}
+        assert client.get(path, headers=renewed_headers).json()["state"] == "complete"
+        assert client.get(path + "/result", headers=renewed_headers).json()["prompt"] == "Recovered video prompt"
+    assert service.balance(wallet.address.lower())["consumed"] == 1
+    with sqlite3.connect(service.config.database) as db:
+        assert db.execute("SELECT COUNT(*) FROM reservations WHERE job_id=?", (job_id,)).fetchone()[0] == 1
+
+
+def test_released_paid_job_is_visible_after_same_wallet_reauthentication(setup, tmp_path):
+    service, wallet, receiver, rpc = setup
+    grant(service, wallet, receiver, rpc, credits=1)
+    _, _, expired = sign_in(service, wallet)
+    job_id = "failed-video-job"
+    service.reserve(wallet.address.lower(), "decode", "b" * 32, "video-fingerprint", job_id)
+    service.settle(job_id, False)
+    with sqlite3.connect(service.config.database) as db:
+        db.execute("UPDATE sessions SET expires=0")
+    _, _, renewed = sign_in(service, wallet)
+    app = create_app(provider="mock", output_dir=tmp_path / "output", upload_dir=tmp_path / "uploads",
+                     orb_credit_service=service)
+    with TestClient(app, base_url="http://localhost") as client:
+        path = f"/api/jobs/{job_id}"
+        assert client.get(path, headers={"Authorization": "Bearer " + expired["token"]}).status_code == 401
+        headers = {"Authorization": "Bearer " + renewed["token"]}
+        assert client.get(path, headers=headers).json()["state"] == "error"
+        assert client.get("/api/orb/credits/balance", headers=headers).json()["available"] == 1
+    assert service.balance(wallet.address.lower())["consumed"] == 0
+
+
 def test_verified_purchase_and_duplicate_grant(setup):
     service, wallet, receiver, rpc = setup
     _, _, session = sign_in(service, wallet)

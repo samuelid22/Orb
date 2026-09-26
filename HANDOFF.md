@@ -680,3 +680,33 @@ a temporary process-only model override described below.
   The original Prometheus checkout was not modified.
 - This audit supports the requested single Orb wallet UX commit and push to
   `origin/main`. It does not authorize or perform deployment.
+
+## 2026-09-26 Paid job session-expiry recovery (local, not deployed)
+
+- A 401 from a paid job-status or result request now pauses polling immediately,
+  retains the saved job ID, and opens the existing Wallet & Credits sign-in
+  control with a clear session-expiry message. It does not submit another AI
+  operation, reserve another credit, or mark the job failed.
+- After a new signed session and successful balance check, polling resumes for
+  the saved job only when the authenticated wallet matches the saved owner.
+  The backend's existing wallet ownership check remains in force. A completed
+  Postgres result can be read after reauthentication; a released job displays
+  its error and refreshes the restored credit balance. A stale 401 from an old
+  token cannot invalidate a newer session.
+- The frontend now allows `resumePaidJob` to restart a job paused for auth even
+  while `currentJobId` is retained. Intentional Disconnect still deletes the
+  saved job pointer. The server session TTL remains 3600 seconds; no payment,
+  video-limit, backend authorization, or deployment configuration changed.
+- Added frontend tests for immediate 401 pause, saved-job retention, same-wallet
+  signed recovery, wrong-wallet refusal, one-upload reuse, durable-result
+  display, and released-balance refresh. Added backend tests for expired-token
+  rejection, same-wallet result recovery, wrong-wallet 404, one settlement,
+  and released-credit restoration. Existing Disconnect tests still pass.
+- Validation: full backend suite **179 passed** (104 existing FastAPI
+  deprecation warnings); full frontend suite **29 passed** in 3 files; guarded
+  Vercel build passed with a placeholder HTTPS Orb API origin. An initial
+  sandboxed pytest attempt failed before setup due temp-directory permissions,
+  and an initial Vitest fork attempt timed out before executing tests; both
+  suites passed using the supported test access and a single thread worker.
+  No live production job or Supabase query was performed, and nothing was
+  deployed, pushed, or committed in this change.

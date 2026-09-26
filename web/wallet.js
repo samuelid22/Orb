@@ -5,12 +5,16 @@ import { apiUrl } from "./api-url.js";
 const CHAIN_ID = 421614;
 const CHAIN_HEX = `0x${CHAIN_ID.toString(16)}`;
 const PENDING_KEY = "orb-sepolia-pending-payment";
+const SESSION_KEY = "orb-wallet-session";
+const DISCONNECTED_KEY = "orb-wallet-disconnected";
+const ACTIVE_JOB_KEY = "orb-active-paid-job";
 
 export function initWallet({ onBalance }) {
   const el = (id) => document.getElementById(id);
   const panel = el("wallet-panel");
   const feedback = el("wallet-feedback");
   const connectButton = el("wallet-connect");
+  const disconnectButton = el("wallet-disconnect");
   const switchButton = el("wallet-switch");
   const buyButton = el("wallet-buy");
   const retryButton = el("wallet-retry");
@@ -18,9 +22,14 @@ export function initWallet({ onBalance }) {
   let config = null;
   let token = null;
   let address = null;
+  let walletAccount = null;
+  let verified = false;
+  let disconnected = sessionStorage.getItem(DISCONNECTED_KEY) === "1";
   let balance = 0;
   let busy = false;
   let verifyTimer = null;
+  let sessionTimer = null;
+  let authEpoch = 0;
 
   async function json(path, options = {}) {
     const response = await fetch(apiUrl(path), options);
@@ -43,21 +52,34 @@ export function initWallet({ onBalance }) {
     el("wallet-address").textContent = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
     el("wallet-address").title = address || "";
     el("wallet-balance").textContent = `${balance} testnet credit${balance === 1 ? "" : "s"} available`;
-    el("wallet-purchase").classList.toggle("hidden", !token || !config?.enabled);
-    connectButton.textContent = token ? "Sign again" : "Connect and sign";
-    connectButton.disabled = busy || !config?.enabled;
-    buyButton.disabled = busy || !token;
-    retryButton.disabled = busy || !token;
+    el("wallet-purchase").classList.toggle("hidden", !verified || !config?.enabled);
+    disconnectButton.classList.toggle("hidden", !verified);
+    disconnectButton.disabled = busy;
+    connectButton.textContent = verified ? "Connected" : token ? "Retry session" : walletAccount ? "Sign again" : "Connect and sign";
+    connectButton.disabled = busy || verified || !config?.enabled;
+    buyButton.disabled = busy || !verified;
+    retryButton.disabled = busy || !verified;
     onBalance(balance);
   }
 
   function clearSession(message = "Wallet session cleared. Connect and sign again.") {
+    authEpoch += 1;
     token = null;
     address = null;
+    verified = false;
     balance = 0;
+    sessionStorage.removeItem(SESSION_KEY);
     clearTimeout(verifyTimer);
+    clearTimeout(sessionTimer);
+    retryButton.classList.add("hidden");
     setFeedback(message);
     update();
+  }
+
+  function scheduleExpiry(expiresAt) {
+    clearTimeout(sessionTimer);
+    const milliseconds = Math.max(0, expiresAt * 1000 - Date.now());
+    sessionTimer = setTimeout(() => clearSession("Wallet session expired. Sign again."), milliseconds);
   }
 
   async function network() {
@@ -84,40 +106,104 @@ export function initWallet({ onBalance }) {
   }
 
   async function refresh() {
-    if (!token) return;
+    if (!token) return false;
+    const currentToken = token;
+    const epoch = authEpoch;
     try {
       const result = await json("/api/orb/credits/balance", { headers: headers() });
+      if (token !== currentToken || epoch !== authEpoch) return false;
       balance = result.available;
+      verified = true;
       update();
+      return true;
     } catch (error) {
+      if (token !== currentToken || epoch !== authEpoch) return false;
       if (error.status === 401) clearSession("Wallet session expired. Sign again.");
-      else setFeedback(`Could not refresh balance: ${error.message}`);
+      else {
+        setFeedback(`Could not verify wallet session: ${error.message}`);
+        update();
+      }
+      return false;
+    }
+  }
+
+  async function restoreSession() {
+    if (disconnected) {
+      walletAccount = null;
+      el("wallet-network").textContent = "Wallet not connected.";
+      switchButton.classList.add("hidden");
+      update();
+      return;
+    }
+    const epoch = authEpoch;
+    const accounts = await window.ethereum?.request?.({ method: "eth_accounts" }) || [];
+    if (epoch !== authEpoch) return;
+    walletAccount = accounts[0] || null;
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); }
+    catch { sessionStorage.removeItem(SESSION_KEY); }
+    if (!saved) { update(); return; }
+    if (!walletAccount || saved.address?.toLowerCase() !== walletAccount.toLowerCase()) {
+      clearSession("Wallet account changed. Sign again.");
+      return;
+    }
+    if (typeof saved.token !== "string" || !saved.token ||
+        !Number.isFinite(saved.expiresAt) || saved.expiresAt <= Date.now() / 1000) {
+      clearSession("Wallet session expired. Sign again.");
+      return;
+    }
+    token = saved.token;
+    address = saved.address;
+    verified = false;
+    scheduleExpiry(saved.expiresAt);
+    if (await refresh() && epoch === authEpoch) {
+      setFeedback("Wallet session restored. Testnet credits only.");
+      const pending = pendingPayment();
+      if (pending && pending.wallet.toLowerCase() === address.toLowerCase()) retryButton.classList.remove("hidden");
     }
   }
 
   async function connect() {
     if (busy) return;
     busy = true;
+    disconnected = false;
+    sessionStorage.removeItem(DISCONNECTED_KEY);
+    let attemptEpoch = authEpoch;
     update();
     try {
       if (!config?.enabled) throw new Error("Testnet credits are not configured on this Orb server.");
       const accounts = await window.ethereum?.request?.({ method: "eth_requestAccounts" });
       if (!accounts?.[0]) throw new Error("No wallet account was selected.");
+      if (attemptEpoch !== authEpoch && walletAccount?.toLowerCase() !== accounts[0].toLowerCase()) return;
+      walletAccount = accounts[0];
       if (!await network()) await switchNetwork();
+      if (walletAccount?.toLowerCase() !== accounts[0].toLowerCase()) return;
+      attemptEpoch = authEpoch;
       const challenge = await json("/api/orb/wallet/challenge", { method: "POST",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address: accounts[0] }) });
       const signature = await window.ethereum.request({ method: "personal_sign", params: [challenge.message, accounts[0]] });
+      if (attemptEpoch !== authEpoch || walletAccount?.toLowerCase() !== accounts[0].toLowerCase()) return;
       const session = await json("/api/orb/wallet/sign-in", { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nonce: challenge.nonce, signature }) });
+      if (attemptEpoch !== authEpoch || walletAccount?.toLowerCase() !== accounts[0].toLowerCase()) return;
+      if (typeof session.token !== "string" || !session.token ||
+          session.wallet?.toLowerCase() !== accounts[0].toLowerCase() ||
+          !Number.isFinite(session.expires_at) || session.expires_at <= Date.now() / 1000) {
+        throw new Error("Wallet session could not be verified. Sign again.");
+      }
       token = session.token;
       address = session.wallet;
+      verified = true;
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token, address, expiresAt: session.expires_at }));
+      scheduleExpiry(session.expires_at);
       setFeedback("Wallet authenticated for this session. Testnet credits only.");
-      await refresh();
+      update();
+      if (!await refresh()) return;
       const pending = pendingPayment();
       if (pending && pending.wallet.toLowerCase() === address.toLowerCase()) retryButton.classList.remove("hidden");
     } catch (error) {
-      clearSession(error.message || "Wallet connection was cancelled.");
+      if (attemptEpoch === authEpoch) clearSession(error.message || "Wallet connection was cancelled.");
     } finally {
       busy = false;
       update();
@@ -138,7 +224,9 @@ export function initWallet({ onBalance }) {
 
   async function verifyPending(attempts = 0) {
     const pending = pendingPayment();
-    if (!pending || !token || pending.wallet.toLowerCase() !== address?.toLowerCase()) return;
+    if (!pending || !verified || !token || pending.wallet.toLowerCase() !== address?.toLowerCase()) return;
+    const currentToken = token;
+    const epoch = authEpoch;
     retryButton.classList.remove("hidden");
     setFeedback(`Verifying transaction ${pending.txHash.slice(0, 10)}… on Arbitrum Sepolia.`);
     try {
@@ -146,12 +234,14 @@ export function initWallet({ onBalance }) {
         method: "POST", headers: { "Content-Type": "application/json", ...headers() },
         body: JSON.stringify({ tx_hash: pending.txHash }),
       });
+      if (currentToken !== token || epoch !== authEpoch) return;
       sessionStorage.removeItem(PENDING_KEY);
       retryButton.classList.add("hidden");
       balance = result.balance.available;
       setFeedback(`${result.credits} testnet credit${result.credits === 1 ? "" : "s"} added.`);
       update();
     } catch (error) {
+      if (currentToken !== token || epoch !== authEpoch) return;
       if (error.status === 409 && attempts < 30) {
         setFeedback("Waiting for the required testnet confirmations…");
         verifyTimer = setTimeout(() => void verifyPending(attempts + 1), 5000);
@@ -181,6 +271,37 @@ export function initWallet({ onBalance }) {
     finally { busy = false; update(); }
   }
 
+  async function disconnect() {
+    if (!verified || !token || busy) return;
+    const oldToken = token;
+    busy = true;
+    disconnected = true;
+    sessionStorage.setItem(DISCONNECTED_KEY, "1");
+    walletAccount = null;
+    clearSession("Disconnecting wallet from Orb…");
+    sessionStorage.removeItem(PENDING_KEY);
+    sessionStorage.removeItem(ACTIVE_JOB_KEY);
+    el("wallet-network").textContent = "Wallet not connected.";
+    switchButton.classList.add("hidden");
+    update();
+    let revoked = false;
+    try {
+      await json("/api/orb/wallet/logout", { method: "POST",
+        headers: { Authorization: `Bearer ${oldToken}` } });
+      revoked = true;
+    } catch (error) {
+      revoked = error.status === 401;
+    }
+    try {
+      await window.ethereum?.request?.({ method: "wallet_revokePermissions",
+        params: [{ eth_accounts: {} }] });
+    } catch { /* Some wallets do not support site permission revocation. */ }
+    setFeedback(revoked ? "Wallet disconnected from Orb." :
+      "Wallet disconnected locally. Server sign-out could not be confirmed; the old session will expire.");
+    busy = false;
+    update();
+  }
+
   function open() { panel.classList.remove("hidden"); el("wallet-close").focus(); }
   function close(restoreFocus = false) {
     panel.classList.add("hidden");
@@ -188,7 +309,8 @@ export function initWallet({ onBalance }) {
   }
 
   el("wallet-close").addEventListener("click", () => close(true));
-  connectButton.addEventListener("click", () => void connect());
+  connectButton.addEventListener("click", () => void (token && !verified ? refresh() : connect()));
+  disconnectButton.addEventListener("click", () => void disconnect());
   switchButton.addEventListener("click", async () => {
     try { await switchNetwork(); setFeedback("Arbitrum Sepolia selected. Connect and sign to continue."); }
     catch (error) { setFeedback(error.message || "Network switch cancelled."); }
@@ -198,8 +320,15 @@ export function initWallet({ onBalance }) {
   count.addEventListener("change", () => {
     if (config) el("credit-price").textContent = `${formatTestnetEth(BigInt(config.price_wei) * BigInt(count.value))} testnet ETH for ${count.value} credit${count.value === "1" ? "" : "s"} (plus gas). Quote expires in 15 minutes.`;
   });
-  window.ethereum?.on?.("accountsChanged", () => clearSession("Wallet account changed. Sign again."));
+  window.ethereum?.on?.("accountsChanged", (accounts) => {
+    if (disconnected) return;
+    const next = accounts?.[0] || null;
+    if (next?.toLowerCase() === walletAccount?.toLowerCase()) return;
+    walletAccount = next;
+    clearSession("Wallet account changed. Sign again.");
+  });
   window.ethereum?.on?.("chainChanged", () => {
+    if (disconnected) return;
     clearSession("Wallet network changed. Switch to Arbitrum Sepolia and sign again.");
     void network().catch(() => {});
   });
@@ -209,12 +338,15 @@ export function initWallet({ onBalance }) {
       if (!config.enabled) setFeedback("Testnet payments are not configured on this server.");
       else setFeedback("Connect a wallet to see your testnet credits.");
       count.dispatchEvent(new Event("change"));
-      if (window.ethereum?.request) await network();
+      if (window.ethereum?.request) {
+        await network().catch(() => {});
+        await restoreSession();
+      }
     } catch { setFeedback("Could not load testnet payment configuration."); }
     update();
   })();
   update();
-  return { open, close, refresh, headers, hasCredit: () => !!token && balance > 0,
-    isAuthenticated: () => !!token, walletAddress: () => address,
+  return { open, close, refresh, headers, hasCredit: () => verified && balance > 0,
+    isAuthenticated: () => verified, walletAddress: () => verified ? address : null,
     isEnabled: () => !!config?.enabled };
 }

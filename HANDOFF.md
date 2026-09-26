@@ -618,3 +618,65 @@ a temporary process-only model override described below.
   placeholders. No live Postgres or Supabase test was performed in this audit.
 - This audit prepares one local Orb commit only; no push, deployment,
   infrastructure creation, or testnet transaction is part of this step.
+
+## 2026-09-26 Wallet authentication UI state fix (local, not deployed)
+
+- Fixed the Wallet & Credits button in `web/wallet.js`: an authenticated
+  session now displays **Connected**; a connected account without valid Orb
+  authentication displays **Sign again**; no selected account displays
+  **Connect and sign**. The balance and payment interface remain unchanged.
+- The signed backend session is stored in browser session storage with its
+  server expiry, then checked against the currently selected MetaMask account
+  and the authenticated backend balance endpoint on reload. A valid session
+  restores without another signature. Expiry, backend 401, or account change
+  clears stale UI state and requires a fresh signed challenge. An account
+  change during a pending signature cannot authenticate the former account.
+  A temporary backend failure displays **Retry session** and rechecks the
+  saved token without requiring another signature.
+- Updated the existing paid-flow frontend fixture and added dedicated wallet
+  state tests in `web/wallet.test.js`. Full frontend suite: **24 passed** in
+  3 files. Guarded production frontend build passed using a placeholder
+  HTTPS API origin. No backend code, Prometheus code, payment configuration,
+  deployment, or push was changed in this step.
+
+## 2026-09-26 Wallet disconnect (local, not deployed)
+
+- Added **Disconnect wallet** to Wallet & Credits, visible only for an
+  authenticated Orb session. Clicking it immediately clears the browser's
+  bearer token, authenticated address, displayed balance, pending payment,
+  and saved paid-job pointer. A per-tab disconnected marker keeps the panel
+  at **Connect and sign** after reload even if MetaMask still exposes the
+  previously permitted account. Reconnecting uses the existing account
+  request, signed challenge, and backend session flow.
+- Added `POST /api/orb/wallet/logout`. It requires the exact configured
+  browser origin and a valid bearer session, then deletes only that session
+  from Orb's persistent sessions table. Other sessions and credit balances
+  are unaffected. The frontend attempts MetaMask's
+  `wallet_revokePermissions` for `eth_accounts` after local logout; an
+  unsupported or rejected request does not undo logout. No transaction or
+  token approval revocation is attempted. If backend revocation cannot be
+  confirmed, the UI reports that local logout completed and the old server
+  session will expire.
+- Validation: **26 relevant backend tests passed** across wallet credits,
+  mocked Postgres adapter, and deployment guard; **26 frontend tests passed**
+  across 3 files; guarded production frontend build passed with a placeholder
+  HTTPS API origin. No live Postgres or deployed-browser verification was
+  performed. At this validation point, Orb changes were uncommitted and
+  undeployed; Prometheus was not modified.
+
+## 2026-09-26 Wallet UX commit audit
+
+- Reviewed the complete pending wallet authentication and disconnect diff,
+  including the earlier **Connected** state fix. Full backend suite:
+  **177 passed**. Full frontend suite: **26 passed** in 3 files. The first
+  frontend runner attempt timed out before starting a worker or executing
+  tests; a standalone retry passed. The guarded production frontend build
+  passed with a placeholder HTTPS API origin.
+- The populated `.env` remains ignored. The nine-file Orb commit candidate
+  contains no configured Gemini key, database URL, RPC credential, wallet
+  private key, seed phrase, runtime database, upload, or generated result.
+  The Arbitrum RPC literal in the wallet network metadata is public; any
+  credential-shaped database URLs in tests use invalid-domain placeholders.
+  The original Prometheus checkout was not modified.
+- This audit supports the requested single Orb wallet UX commit and push to
+  `origin/main`. It does not authorize or perform deployment.

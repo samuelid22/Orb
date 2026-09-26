@@ -125,6 +125,7 @@ describe("Orb frontend", () => {
     const provider = {
       on: vi.fn(),
       request: vi.fn(async ({ method, params }) => {
+        if (method === "eth_accounts") return [address];
         if (method === "eth_requestAccounts") return [address];
         if (method === "eth_chainId") return chain;
         if (method === "wallet_switchEthereumChain") { chain = params[0].chainId; return null; }
@@ -141,7 +142,8 @@ describe("Orb frontend", () => {
       if (path === "/api/ready") return response({ status: "ready" });
       if (isUploadPingUrl(path)) return response({}, 204);
       if (path === "/api/orb/wallet/challenge") return response({ nonce: "nonce", message: "Sign in to Orb testnet" });
-      if (path === "/api/orb/wallet/sign-in") return response({ wallet: address, token: "session-token" });
+      if (path === "/api/orb/wallet/sign-in") return response({ wallet: address, token: "session-token",
+        expires_at: Math.floor(Date.now() / 1000) + 3600 });
       if (path === "/api/orb/credits/balance") return response({ wallet: address, available });
       if (path === "/api/orb/credits/quotes") return response({ quote_id: "quote", chain_id: 421614,
         to: receiver, value_wei: "1000000000000", data: "0x4f524231abcd" });

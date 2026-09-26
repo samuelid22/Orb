@@ -159,6 +159,13 @@ class CreditService:
             raise CreditError("Wallet session expired. Sign again.", 401)
         return row["wallet"]
 
+    def logout(self, authorization: str | None) -> None:
+        """Revoke this signed Orb session without changing credits or wallet permissions."""
+        wallet = self.authenticate(authorization)
+        token_hash = hashlib.sha256(authorization[7:].encode()).hexdigest()
+        with self._db() as db:
+            db.execute("DELETE FROM sessions WHERE token_hash=? AND wallet=?", (token_hash, wallet))
+
     def _check_origin(self, origin: str | None) -> None:
         if origin != self.config.public_origin:
             raise CreditError("Wallet request origin is not trusted.", 403)

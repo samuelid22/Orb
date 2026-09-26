@@ -516,6 +516,15 @@ def create_app(
         except CreditError as exc:
             raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
+    @app.post("/api/orb/wallet/logout")
+    def orb_wallet_logout(request: Request) -> dict:
+        try:
+            credit_service._check_origin(request.headers.get("origin"))
+            credit_service.logout(request.headers.get("authorization"))
+        except CreditError as exc:
+            raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+        return {"status": "signed_out"}
+
     @app.get("/api/orb/credits/balance")
     def orb_credit_balance(request: Request) -> dict:
         return credit_service.balance(_wallet(request))

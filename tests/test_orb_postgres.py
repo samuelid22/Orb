@@ -205,6 +205,19 @@ def purchase_one(service, wallet, chain):
         service.verify_purchase(wallet.address.lower(), second["quote_id"], tx_hash)
 
 
+def test_mocked_postgres_logout_revokes_current_session(tmp_path):
+    service, wallet, _ = make_store(tmp_path)
+    challenge = service.challenge(wallet.address, "http://localhost")
+    signature = Account.sign_message(encode_defunct(text=challenge["message"]), wallet.key).signature.hex()
+    signed = service.sign_in(challenge["nonce"], signature, "http://localhost")
+    bearer = "Bearer " + signed["token"]
+    assert service.authenticate(bearer) == wallet.address.lower()
+    service.logout(bearer)
+    with pytest.raises(CreditError) as expired:
+        service.authenticate(bearer)
+    assert expired.value.status == 401
+
+
 def test_mocked_postgres_result_survives_restart_and_settles_once(tmp_path):
     service, wallet, chain = make_store(tmp_path)
     purchase_one(service, wallet, chain)

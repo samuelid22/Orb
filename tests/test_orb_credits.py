@@ -95,6 +95,28 @@ def test_wallet_signature_nonce_domain_and_replay(setup):
         service.authenticate("Bearer " + session["token"])
 
 
+def test_wallet_logout_revokes_only_current_session(setup, tmp_path):
+    service, wallet, receiver, rpc = setup
+    _, _, first = sign_in(service, wallet)
+    _, _, second = sign_in(service, wallet)
+    grant(service, wallet, receiver, rpc, credits=1)
+    app = create_app(provider="mock", output_dir=tmp_path / "output", upload_dir=tmp_path / "uploads",
+                     orb_credit_service=service)
+    with TestClient(app, base_url="http://localhost") as client:
+        headers = {"Origin": "http://localhost", "Authorization": "Bearer " + first["token"]}
+        assert client.post("/api/orb/wallet/logout", headers={"Origin": "http://localhost"}).status_code == 401
+        assert client.post("/api/orb/wallet/logout", headers={**headers, "Origin": "http://evil.example"}).status_code == 403
+        assert client.get("/api/orb/credits/balance", headers=headers).status_code == 200
+        assert client.post("/api/orb/wallet/logout", headers=headers).json() == {"status": "signed_out"}
+        assert client.post("/api/orb/wallet/logout", headers=headers).status_code == 401
+        assert client.get("/api/orb/credits/balance", headers=headers).status_code == 401
+        assert client.get("/api/orb/credits/balance", headers={
+            "Authorization": "Bearer " + second["token"]}).json()["available"] == 1
+    _, _, fresh = sign_in(service, wallet)
+    assert service.authenticate("Bearer " + fresh["token"]) == wallet.address.lower()
+    assert service.balance(wallet.address.lower())["available"] == 1
+
+
 def test_verified_purchase_and_duplicate_grant(setup):
     service, wallet, receiver, rpc = setup
     _, _, session = sign_in(service, wallet)

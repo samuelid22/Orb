@@ -39,6 +39,9 @@ const els = {
   modeDecode: document.getElementById("mode-decode"),
   modeCompose: document.getElementById("mode-compose"),
   modeEnhance: document.getElementById("mode-enhance"),
+  createInfo: document.getElementById("create-info"),
+  createPopover: document.getElementById("create-popover"),
+  createPopoverClose: document.getElementById("create-popover-close"),
   modeDescription: document.getElementById("mode-description"),
   enhanceShell: document.getElementById("enhance-shell"),
   promptInput: document.getElementById("prompt-input"),
@@ -136,6 +139,7 @@ function showScreen(name) {
   setMenuOpen(false);
   setAboutOpen(false);
   wallet.close();
+  setCreateInfoOpen(false);
   for (const key of Object.keys(screens)) {
     screens[key].classList.toggle("hidden", key !== name);
   }
@@ -146,15 +150,25 @@ function showScreen(name) {
 function setMenuOpen(open) {
   if (open) setAboutOpen(false);
   if (open) wallet.close();
+  if (open) setCreateInfoOpen(false);
   els.siteMenu.classList.toggle("hidden", !open);
   els.menuToggle.setAttribute("aria-expanded", String(open));
   els.menuToggle.setAttribute("aria-label", open ? "Close menu" : "Open menu");
 }
 
 function setAboutOpen(open, restoreFocus = false) {
+  if (open) setCreateInfoOpen(false);
   els.aboutPanel.classList.toggle("hidden", !open);
   if (open) els.aboutClose.focus();
   else if (restoreFocus) els.menuToggle.focus();
+}
+
+function setCreateInfoOpen(open, restoreFocus = false) {
+  const focusWasInside = els.createPopover.contains(document.activeElement);
+  els.createPopover.classList.toggle("hidden", !open);
+  els.createInfo.setAttribute("aria-expanded", String(open));
+  if (open) els.createPopoverClose.focus();
+  else if (restoreFocus || focusWasInside) els.createInfo.focus();
 }
 
 function showError(box, message) {
@@ -224,6 +238,7 @@ function syncDecodeButton() {
 
 function setMode(mode) {
   if (actionBusy || !["decode", "compose", "enhance"].includes(mode)) return;
+  setCreateInfoOpen(false);
   currentMode = mode;
   els.modeDescription.textContent = mode === "decode"
     ? "Reconstruct a plausible generation prompt from an image or video."
@@ -846,12 +861,22 @@ els.menuWallet.addEventListener("click", (event) => {
 els.aboutClose.addEventListener("click", () => {
   setAboutOpen(false, true);
 });
+els.createInfo.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setCreateInfoOpen(els.createPopover.classList.contains("hidden"), true);
+});
+els.createPopoverClose.addEventListener("click", (event) => {
+  event.stopPropagation();
+  setCreateInfoOpen(false, true);
+});
 document.addEventListener("click", (event) => {
   if (!els.menuToggle.parentElement.contains(event.target)) setMenuOpen(false);
+  if (!document.getElementById("mode-create").contains(event.target)) setCreateInfoOpen(false);
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    if (!document.getElementById("wallet-panel").classList.contains("hidden")) wallet.close(true);
+    if (!els.createPopover.classList.contains("hidden")) setCreateInfoOpen(false, true);
+    else if (!document.getElementById("wallet-panel").classList.contains("hidden")) wallet.close(true);
     else if (!els.aboutPanel.classList.contains("hidden")) setAboutOpen(false, true);
     else if (!els.siteMenu.classList.contains("hidden")) {
       setMenuOpen(false);

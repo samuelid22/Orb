@@ -12,22 +12,7 @@
   <header class="topbar">
     <div class="brand" aria-label="Orb">
       <span class="brand-icon" aria-hidden="true">
-        <svg class="planet" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="planet-fill" x1=".15" y1=".05" x2=".85" y2=".95">
-              <stop stop-color="#D4F2FF"/>
-              <stop offset=".46" stop-color="#75BCFF"/>
-              <stop offset="1" stop-color="#2777DE"/>
-            </linearGradient>
-            <linearGradient id="ring-fill" x1="0" y1="0" x2="1" y2="1">
-              <stop stop-color="#9DD8FF"/>
-              <stop offset="1" stop-color="#367EE1"/>
-            </linearGradient>
-          </defs>
-          <ellipse cx="40" cy="40" rx="35" ry="10" transform="rotate(-32 40 40)" fill="none" stroke="url(#ring-fill)" stroke-width="5"/>
-          <circle cx="40" cy="40" r="24" fill="url(#planet-fill)"/>
-          <path d="M10 56c13 4 43-11 61-31" fill="none" stroke="#B5E3FF" stroke-width="5" stroke-linecap="round"/>
-        </svg>
+        <span class="orb-mark"><span class="orb-sphere"></span></span>
       </span>
       <span class="wordmark">Orb</span>
     </div>
@@ -60,17 +45,35 @@
     </div>
   </header>
 
-  <section id="about-panel" class="about-panel hidden" role="dialog" aria-labelledby="about-title" aria-modal="false">
+  <section id="about-panel" class="about-panel about-orb hidden" role="dialog" aria-labelledby="about-title" aria-modal="false">
     <div class="about-head">
       <h2 id="about-title">About Orb</h2>
       <button id="about-close" class="about-close" type="button" aria-label="Close About Orb"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19"/></svg></button>
     </div>
-    <p>Orb helps turn visual references into creative direction.</p>
-    <ul>
-      <li><strong>Decode</strong> <span>Reconstruct a plausible prompt from an image or video.</span></li>
-      <li><strong>Compose</strong> <span>Create a new prompt inspired by a visual reference.</span></li>
-      <li><strong>Enhance</strong> <span>Refine an existing generation prompt.</span></li>
-    </ul>
+    <div class="about-content">
+      <div class="about-intro">
+        <h3>From what you see to what you can make</h3>
+        <p>Orb is an AI-powered visual intelligence and creative prompting platform. It helps creators move between finished images or videos and the ideas needed to make new visual media.</p>
+      </div>
+      <div class="about-section">
+        <h3>Why Orb exists</h3>
+        <p>A striking visual rarely comes with its original prompt. Describing its composition, translating it into a new idea, or improving an existing prompt can be difficult. Orb gives that creative work a clear path.</p>
+      </div>
+      <div class="about-section">
+        <h3>One creative workflow</h3>
+        <ul class="about-stages">
+          <li><strong>Decode · understand</strong><span>Examine an image or video for visual reasoning and a plausible reconstructed prompt. The creator's exact prompt cannot be guaranteed.</span></li>
+          <li><strong>Compose · build</strong><span>Use a visual reference as context for a new generation-ready prompt, without claiming to recover the original.</span></li>
+          <li><strong>Enhance · refine</strong><span>Develop an existing idea into a more deliberate image or video generation instruction.</span></li>
+          <li><strong>Create · realize <em>Coming soon</em></strong><span>Eventually turn those prompts into finished images and videos. Create is not available yet.</span></li>
+        </ul>
+      </div>
+      <div class="about-section">
+        <h3>The bigger picture</h3>
+        <p>See something → understand it → reinterpret it → refine the idea → create something new. Orb is for AI creators, filmmakers, designers, visual artists, creative researchers, and anyone learning the language of generative visuals.</p>
+      </div>
+      <p class="about-testnet">Orb uses Arbitrum Sepolia testnet credits to demonstrate verifiable on-chain access to its AI tools. These demo credits have no real-money value.</p>
+    </div>
   </section>
 
   <section id="wallet-panel" class="about-panel wallet-panel hidden" role="dialog" aria-labelledby="wallet-title" aria-modal="false">
@@ -153,23 +156,24 @@
         <button id="mode-decode" class="mode-pill active" type="button" aria-current="page">Decode</button>
         <button id="mode-compose" class="mode-pill" type="button">Compose</button>
         <button id="mode-enhance" class="mode-pill" type="button">Enhance</button>
+        <div id="mode-create" class="mode-pill mode-create" role="group" aria-label="Create mode locked; coming soon">
+          <span class="create-title">Create <svg class="create-lock" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+          <small>Coming soon</small>
+          <button id="create-info" class="create-info" type="button" aria-label="About the upcoming Create mode" aria-haspopup="dialog" aria-controls="create-popover" aria-expanded="false">i</button>
+          <div id="create-popover" class="create-popover hidden" role="dialog" aria-labelledby="create-popover-title" aria-modal="false">
+            <div class="create-popover-head"><strong id="create-popover-title">Create · Coming soon</strong><button id="create-popover-close" type="button" aria-label="Close Create information">×</button></div>
+            <p>Create is Orb's next stage. It will use advanced image and video generation models to turn prompts shaped by Decode, Compose and Enhance into finished media.</p>
+            <p class="create-flow">Decode → understand · Compose → build · Enhance → refine · Create → realize</p>
+          </div>
+        </div>
       </nav>
-      <p class="roadmap-note">Your next step: <span>Generate · Coming soon</span></p>
       <p class="testnet-note">Arbitrum Sepolia testnet credits · Demo only · No real-money value</p>
     </section>
 
     <section id="screen-processing" class="screen hidden secondary-screen" tabindex="-1">
       <div class="processing-head">
         <div class="orb-spin" aria-hidden="true">
-          <svg class="processing-planet" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="loader-planet-fill" x1=".15" y1=".05" x2=".85" y2=".95"><stop stop-color="#D4F2FF"/><stop offset=".46" stop-color="#75BCFF"/><stop offset="1" stop-color="#2777DE"/></linearGradient>
-              <linearGradient id="loader-ring-fill" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#9DD8FF"/><stop offset="1" stop-color="#367EE1"/></linearGradient>
-            </defs>
-            <ellipse cx="40" cy="40" rx="35" ry="10" transform="rotate(-32 40 40)" fill="none" stroke="url(#loader-ring-fill)" stroke-width="5"/>
-            <circle cx="40" cy="40" r="24" fill="url(#loader-planet-fill)"/>
-            <path d="M10 56c13 4 43-11 61-31" fill="none" stroke="#B5E3FF" stroke-width="5" stroke-linecap="round"/>
-          </svg>
+          <span class="orb-mark"><span class="orb-sphere"></span></span>
         </div>
         <div id="phase-text" class="phase" role="status" aria-live="polite">Preparing Orb…</div>
         <div id="phase-detail" class="phase-detail"></div>

@@ -770,3 +770,29 @@ a temporary process-only model override described below.
   Enhance fields. The local Vite preview had no live backend attached, so
   rendered paid results and processing were checked by frontend tests rather
   than an end-to-end browser run. No real wallet transaction was initiated.
+
+## 2026-09-27 Final visual refinement (local, not committed or deployed)
+
+- The desktop frame maximum width is now **1005px**, centered. Tablet and
+  mobile remain fluid with the existing breakpoints and safe-area spacing.
+- The header and processing views share a CSS atmospheric blue/cyan sphere
+  with Orb's tilted planetary ring. A diffused highlight travels left to right
+  across the sphere to suggest prograde rotation; the ring remains steady.
+  Header motion loops in 12 seconds and processing motion in 4.5 seconds.
+  Reduced-motion preferences stop the animation.
+- The mode row now reads Decode, Compose, Enhance, Create. Create is a locked,
+  non-actionable mode with a Coming soon label. Its separate information button
+  opens a keyboard-accessible roadmap popover and closes on outside click,
+  Escape, or its close button. It has no backend path or credit action. The
+  prior Generate roadmap note was removed.
+- About Orb now explains the problem, the three current stages, the future
+  Create stage, the creative loop, intended audiences, and testnet credits.
+  Its sections stay scrollable on mobile and its close control stays visible.
+- Rendered browser checks at 1280px, 768px, 390px, and 320px found no
+  horizontal overflow. The desktop frame measured 1005px; mobile preserved a
+  28px bottom gap. The Create popover was adjusted to fit a 320px viewport.
+  The local preview had no live backend, so this pass did not perform a paid
+  AI or wallet transaction in the browser.
+- Validation: full backend suite **179 passed** (104 existing FastAPI
+  deprecation warnings); full frontend suite **34 passed** in 3 files; guarded
+  Vercel production build passed with a placeholder HTTPS API origin.

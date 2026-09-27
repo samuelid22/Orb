@@ -161,24 +161,30 @@ describe("Orb frontend", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows all three working modes in the approved layout", async () => {
+  it("shows three working modes and a locked fourth Create stage", async () => {
     mockApi();
     await import("./app.js");
     await flush();
 
     expect(document.querySelector(".wordmark").textContent).toBe("Orb");
     expect(document.querySelector(".mode-pill.active").textContent).toBe("Decode");
-    expect(document.querySelectorAll(".mode-pill")).toHaveLength(3);
+    expect(Array.from(document.querySelectorAll(".mode-pill")).map((item) => item.id)).toEqual([
+      "mode-decode", "mode-compose", "mode-enhance", "mode-create",
+    ]);
     expect(document.getElementById("mode-compose").disabled).toBe(false);
     expect(document.getElementById("mode-enhance").disabled).toBe(false);
+    expect(document.getElementById("mode-create").getAttribute("aria-label")).toMatch(/locked; coming soon/i);
+    expect(document.querySelector("#mode-create .create-lock")).not.toBeNull();
+    expect(document.querySelector("#mode-create small").textContent).toBe("Coming soon");
+    expect(document.querySelector("#mode-create > button:not(#create-info)")).toBeNull();
     expect(document.querySelector(".mode-cards")).toBeNull();
     expect(document.querySelector(".mode-nav")).toBeNull();
     expect(document.querySelector("#dropzone small").textContent).toContain("WebP");
     expect(document.querySelector(".topbar #header-wallet").textContent).toBe("Connect Wallet");
     expect(document.querySelector("#upload-shell #header-wallet")).toBeNull();
     expect(document.getElementById("upload-credits-cta")).toBeNull();
-    expect(document.querySelector(".roadmap-note span").textContent).toBe("Generate · Coming soon");
-    expect(document.querySelector(".roadmap-note button, .roadmap-note a")).toBeNull();
+    expect(document.querySelector(".roadmap-note")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Gemini/i);
   });
 
   it("uses wallet-estimated fees and a fresh quote after an under-base-fee rejection", async () => {
@@ -347,7 +353,7 @@ describe("Orb frontend", () => {
     document.getElementById("menu-about").click();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(document.getElementById("about-panel").classList.contains("hidden")).toBe(false);
-    expect(document.getElementById("about-panel").textContent).toContain("Reconstruct a plausible prompt");
+    expect(document.getElementById("about-panel").textContent).toContain("visual intelligence and creative prompting");
     document.getElementById("about-close").click();
     toggle.click();
     document.getElementById("menu-wallet").click();
@@ -355,7 +361,9 @@ describe("Orb frontend", () => {
     expect(document.getElementById("wallet-panel").textContent).toContain("TESTNET ONLY");
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(document.getElementById("wallet-panel").classList.contains("hidden")).toBe(true);
-    expect(document.getElementById("about-panel").textContent).toContain("Refine an existing generation prompt");
+    expect(document.getElementById("about-panel").textContent).toContain("See something → understand it");
+    expect(document.getElementById("about-panel").textContent).toContain("Arbitrum Sepolia testnet credits");
+    expect(document.getElementById("about-panel").textContent).toContain("Create · realize");
     document.getElementById("about-close").click();
     expect(document.getElementById("about-panel").classList.contains("hidden")).toBe(true);
   });
@@ -528,10 +536,9 @@ describe("Orb frontend", () => {
     chooseVideo();
     document.getElementById("decode-btn").click();
     await flush();
-    const loader = document.querySelector("#screen-processing .orb-spin svg.processing-planet");
+    const loader = document.querySelector("#screen-processing .orb-spin .orb-mark .orb-sphere");
     expect(loader).not.toBeNull();
-    expect(loader.querySelector("ellipse")).not.toBeNull();
-    expect(loader.querySelector("circle")).not.toBeNull();
+    expect(document.querySelector(".brand-icon .orb-mark .orb-sphere")).not.toBeNull();
     expect(document.getElementById("phase-text").textContent).toBe("Analyzing scenes…");
     expect(document.getElementById("phase-detail").textContent).toBe("Scene 2 of 3");
     expect(document.getElementById("screen-processing").textContent).not.toMatch(/Gemini|FFmpeg|FFprobe/i);
@@ -568,15 +575,48 @@ describe("Orb frontend", () => {
     expect(document.getElementById("screen-processing").textContent).not.toMatch(/Gemini/i);
   });
 
-  it("uses a 980px desktop frame, centered close icon, and mobile safe-area rules", () => {
+  it("opens Create information without enabling Create or starting an AI operation", async () => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    const before = inspectCalls(fetchMock).length;
+    const create = document.getElementById("mode-create");
+    const info = document.getElementById("create-info");
+    const popover = document.getElementById("create-popover");
+    create.click();
+    expect(document.querySelector(".mode-pill.active").id).toBe("mode-decode");
+    expect(inspectCalls(fetchMock)).toHaveLength(before);
+    info.focus();
+    info.click();
+    expect(info.getAttribute("aria-expanded")).toBe("true");
+    expect(popover.classList.contains("hidden")).toBe(false);
+    expect(popover.textContent).toContain("advanced image and video generation models");
+    expect(popover.textContent).toContain("Create → realize");
+    expect(document.getElementById("create-popover-close").focus).toHaveBeenCalled();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(popover.classList.contains("hidden")).toBe(true);
+    expect(info.focus).toHaveBeenCalled();
+    info.click();
+    document.body.click();
+    expect(info.getAttribute("aria-expanded")).toBe("false");
+    info.click();
+    document.getElementById("create-popover-close").click();
+    expect(popover.classList.contains("hidden")).toBe(true);
+    expect(inspectCalls(fetchMock)).toHaveLength(before);
+  });
+
+  it("uses a 1005px desktop frame, atmospheric Orb motion, and mobile safe-area rules", () => {
     const style = document.createElement("style");
     style.textContent = css;
     document.head.appendChild(style);
-    expect(getComputedStyle(document.querySelector(".app-frame")).maxWidth).toBe("980px");
+    expect(getComputedStyle(document.querySelector(".app-frame")).maxWidth).toBe("1005px");
     expect(getComputedStyle(document.getElementById("wallet-close")).display).toBe("grid");
     expect(css).toMatch(/\.about-close\s*\{[^}]*place-items:\s*center/);
     expect(css).toMatch(/@media \(max-width: 600px\)[\s\S]*?safe-area-inset-bottom/);
-    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-planet/);
+    expect(css).toMatch(/@keyframes orb-prograde[\s\S]*?translateX\(34%\)/);
+    expect(css).toMatch(/\.orb-spin \.orb-sphere::before\s*\{\s*animation-duration:\s*4\.5s/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.orb-sphere::before[^}]*animation:\s*none/);
+    expect(css).toMatch(/@media \(max-width: 600px\)[\s\S]*?\.mode-pills\s*\{\s*grid-template-columns:\s*repeat\(2/);
     expect(document.querySelector("#wallet-close svg path").getAttribute("d")).toBe("M5 5 19 19M19 5 5 19");
   });
 });

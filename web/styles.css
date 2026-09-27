@@ -90,17 +90,21 @@ button { font: inherit; }
 .orb-sphere::before {
   content: "";
   position: absolute;
-  inset: -8% -75%;
-  background: radial-gradient(ellipse at center, rgba(255,255,255,.9) 0%, rgba(166,238,255,.58) 20%, transparent 51%);
-  filter: blur(3px);
+  top: -8%; left: -70%;
+  width: 70%; height: 116%;
+  background:
+    radial-gradient(ellipse at 50% 42%, rgba(255,255,255,.98) 0%, rgba(197,249,255,.88) 27%, rgba(79,197,250,.42) 54%, transparent 78%),
+    linear-gradient(112deg, transparent 10%, rgba(231,255,255,.68) 48%, transparent 88%);
+  filter: blur(1px);
+  pointer-events: none;
   will-change: transform, opacity;
-  animation: orb-prograde 12s linear infinite;
+  animation: orb-prograde 6s linear infinite;
 }
 @keyframes orb-prograde {
-  0% { transform: translateX(-34%); opacity: 0; }
-  15% { opacity: .75; }
-  85% { opacity: .75; }
-  100% { transform: translateX(34%); opacity: 0; }
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: .95; }
+  88% { opacity: .95; }
+  100% { transform: translateX(250%); opacity: 0; }
 }
 
 .wordmark {
@@ -376,7 +380,8 @@ button { font: inherit; }
 .create-popover { position: absolute; z-index: 10; right: 0; bottom: calc(100% + 12px); width: min(350px, calc(100vw - 48px)); padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: white; box-shadow: 0 16px 42px rgba(28,69,120,.17); color: var(--navy); font-size: 13px; font-weight: 400; text-align: left; white-space: normal; }
 .create-popover-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .create-popover-head strong { font-size: 14px; }
-.create-popover-head button { flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: var(--blue-pale); color: var(--navy); font-size: 20px; line-height: 1; cursor: pointer; }
+.create-popover-head button { flex: 0 0 auto; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: var(--blue-pale); color: var(--navy); cursor: pointer; }
+.create-popover-head button svg { display: block; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
 .create-popover p { margin: 9px 0 0; color: var(--muted); line-height: 1.5; }
 .create-popover .create-flow { color: var(--blue-deep); font-weight: 650; }
 
@@ -423,8 +428,8 @@ button { font: inherit; }
 .secondary-screen { max-width: 900px; margin: 40px auto 36px; }
 .processing-head, .results-head { text-align: center; margin-bottom: 28px; }
 .orb-spin { display: grid; place-items: center; width: 80px; height: 80px; margin: 0 auto 18px; border: 1px solid var(--border); border-radius: 20px; background: var(--panel); }
-.orb-spin .orb-mark { width: 62px; height: 62px; }
-.orb-spin .orb-sphere::before { animation-duration: 4.5s; }
+.orb-spin .orb-mark { width: 70px; height: 70px; }
+.orb-spin .orb-sphere::before { animation-duration: 2.4s; }
 .phase { font-size: 20px; font-weight: 700; }
 .phase-detail { margin-top: 4px; color: var(--muted); font-size: 13px; }
 .steps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none; }

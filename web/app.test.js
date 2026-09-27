@@ -592,6 +592,7 @@ describe("Orb frontend", () => {
     expect(popover.classList.contains("hidden")).toBe(false);
     expect(popover.textContent).toContain("advanced image and video generation models");
     expect(popover.textContent).toContain("Create → realize");
+    expect(document.querySelector("#create-popover-close svg path").getAttribute("d")).toBe("M5 5 19 19M19 5 5 19");
     expect(document.getElementById("create-popover-close").focus).toHaveBeenCalled();
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(popover.classList.contains("hidden")).toBe(true);
@@ -613,8 +614,11 @@ describe("Orb frontend", () => {
     expect(getComputedStyle(document.getElementById("wallet-close")).display).toBe("grid");
     expect(css).toMatch(/\.about-close\s*\{[^}]*place-items:\s*center/);
     expect(css).toMatch(/@media \(max-width: 600px\)[\s\S]*?safe-area-inset-bottom/);
-    expect(css).toMatch(/@keyframes orb-prograde[\s\S]*?translateX\(34%\)/);
-    expect(css).toMatch(/\.orb-spin \.orb-sphere::before\s*\{\s*animation-duration:\s*4\.5s/);
+    expect(getComputedStyle(document.getElementById("create-popover-close")).display).toBe("grid");
+    expect(css).toMatch(/\.orb-sphere::before\s*\{[^}]*left:\s*-70%;[^}]*width:\s*70%;[^}]*animation:\s*orb-prograde 6s/);
+    expect(css).toMatch(/@keyframes orb-prograde[\s\S]*?translateX\(0\)[\s\S]*?translateX\(250%\)/);
+    expect(css).toMatch(/\.orb-spin \.orb-mark\s*\{\s*width:\s*70px;\s*height:\s*70px/);
+    expect(css).toMatch(/\.orb-spin \.orb-sphere::before\s*\{\s*animation-duration:\s*2\.4s/);
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.orb-sphere::before[^}]*animation:\s*none/);
     expect(css).toMatch(/@media \(max-width: 600px\)[\s\S]*?\.mode-pills\s*\{\s*grid-template-columns:\s*repeat\(2/);
     expect(document.querySelector("#wallet-close svg path").getAttribute("d")).toBe("M5 5 19 19M19 5 5 19");

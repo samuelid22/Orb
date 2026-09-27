@@ -796,3 +796,24 @@ a temporary process-only model override described below.
 - Validation: full backend suite **179 passed** (104 existing FastAPI
   deprecation warnings); full frontend suite **34 passed** in 3 files; guarded
   Vercel production build passed with a placeholder HTTPS API origin.
+
+## 2026-09-27 Create close icon and Orb motion follow-up (local, not committed or deployed)
+
+- The Create information popover's text `×` used uneven font glyph metrics
+  despite grid centering. It now uses a symmetric SVG cross inside the same
+  28px circular button. Browser geometry showed zero horizontal and vertical
+  offset on desktop and mobile, and at 125% and 150% CSS zoom.
+- The previous oversized, blurred, symmetric glow moved in CSS but changed
+  too little of the clipped sphere to read as motion. A narrower atmospheric
+  highlight now traverses the sphere fully from left to right while Orb's ring
+  stays steady. The header loop takes 6 seconds; the larger processing mark
+  loops in 2.4 seconds. Reduced-motion rules continue to stop movement.
+- A temporary local visual fixture rendered both sizes together; it was
+  removed after checks. Browser samples over 300ms measured about 3.6px of
+  left-to-right header travel and 9.5px of processing travel. Desktop and
+  390px/320px mobile popovers showed a centered close cross and no horizontal
+  overflow. The local preview had no backend attached, so no live AI or paid
+  processing flow was run for this purely visual follow-up.
+- Validation: targeted frontend file **21 passed**; full frontend suite
+  **34 passed** in 3 files; guarded Vercel production build passed with a
+  placeholder HTTPS API origin.

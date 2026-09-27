@@ -710,3 +710,63 @@ a temporary process-only model override described below.
   suites passed using the supported test access and a single thread worker.
   No live production job or Supabase query was performed, and nothing was
   deployed, pushed, or committed in this change.
+
+## 2026-09-27 Arbitrum Sepolia wallet fee rejection (local, not deployed)
+
+- Audited Buy Credits: Orb's `eth_sendTransaction` request already contains only
+  the authenticated `from` address, server-quoted `to`, exact hex `value`, and
+  quote `data`. It contains no `gas`, `gasPrice`, `maxFeePerGas`, or
+  `maxPriorityFeePerGas`. The quote `data` must remain because the backend
+  checks the on-chain input against that quote to prevent unrelated payments.
+- The reported `maxFeePerGas < baseFee` values therefore arise after the
+  request reaches MetaMask or its RPC fee estimator. Orb cannot remove a fee
+  override it does not send. The wallet UI now gives specific retry guidance
+  for this rejection, reminds the user to check wallet activity, and does not
+  automatically resubmit a transaction. Clicking Buy Credits again obtains a
+  fresh server quote and asks MetaMask to estimate and approve it again.
+- The payment amount, receiver, chain ID 421614, wallet authentication, and
+  backend receipt verification remain unchanged. An integration test asserts
+  both initial and retry transaction objects have exactly the four required
+  fields and that a failed fee estimate creates no pending-payment record.
+- No real on-chain transaction was initiated as part of this change. A live
+  MetaMask retry is still needed to determine whether its current network/RPC
+  fee estimate succeeds.
+- Validation: targeted frontend file **16 passed**, full frontend suite
+  **29 passed** across 3 files, and guarded Vercel production build passed
+  using a placeholder HTTPS API origin. No push or deployment was performed.
+
+## 2026-09-27 Final Orb UI/UX polish (local, not deployed)
+
+- The header now contains the compact primary Connect Wallet / Connected
+  action beside the existing menu. It uses the same signed wallet flow and
+  opens Wallet & Credits; the redundant wallet prompts below upload/Enhance
+  were removed. The panel still shows account, network, credits, buying, and
+  disconnect. Its testnet notice is shorter.
+- The processing view uses Orb's Neptune-style mark instead of a generic ring
+  spinner. It rotates subtly and stops under reduced-motion preferences.
+  Upload, image/video analysis, scene analysis, prompt creation, and Enhance
+  labels now use product language. Payment verification text is simplified.
+- The desktop frame is capped at **980px** and centered. The hero wraps in
+  balanced lines. Mobile retains fluid width, safe-area bottom spacing, and
+  responsive header, panel, upload, and mode controls. Existing circular panel
+  close icons use a symmetric SVG cross with grid centering. This checkout has
+  no separate processing cancel control or backend cancel route, so no fake
+  cancel action was introduced.
+- Results no longer render the backend provider name. Provider/infrastructure
+  errors are shown as Orb AI errors. Decode keeps a plausible-reconstruction
+  caveat; Compose and Enhance have distinct purpose text. A noninteractive
+  `Generate · Coming soon` roadmap note appears below the mode pills.
+- Existing local uncommitted wallet fee-guidance changes are preserved. No AI,
+  payment, credit, auth, Postgres, chain, backend processing, or job-recovery
+  behavior was intentionally changed. Nothing was committed, pushed, or
+  deployed during this polish pass.
+- Validation: full backend suite **179 passed** (104 existing FastAPI
+  deprecation warnings); full frontend suite **33 passed** in 3 files; guarded
+  Vercel production build passed with a placeholder HTTPS API origin.
+- Local browser visual checks at desktop 1280px, tablet 768px, mobile 390px,
+  and narrow mobile 320px confirmed the centered 980px desktop frame, fluid
+  mobile layout, no horizontal overflow, 28px mobile bottom gap, readable
+  header controls, reachable Wallet & Credits panel/close icon, and usable
+  Enhance fields. The local Vite preview had no live backend attached, so
+  rendered paid results and processing were checked by frontend tests rather
+  than an end-to-end browser run. No real wallet transaction was initiated.

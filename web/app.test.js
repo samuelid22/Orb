@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const html = readFileSync(resolve(process.cwd(), "web/index.html"), "utf8");
+const css = readFileSync(resolve(process.cwd(), "web/styles.css"), "utf8");
 
 function response(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -173,15 +174,21 @@ describe("Orb frontend", () => {
     expect(document.querySelector(".mode-cards")).toBeNull();
     expect(document.querySelector(".mode-nav")).toBeNull();
     expect(document.querySelector("#dropzone small").textContent).toContain("WebP");
+    expect(document.querySelector(".topbar #header-wallet").textContent).toBe("Connect Wallet");
+    expect(document.querySelector("#upload-shell #header-wallet")).toBeNull();
+    expect(document.getElementById("upload-credits-cta")).toBeNull();
+    expect(document.querySelector(".roadmap-note span").textContent).toBe("Generate · Coming soon");
+    expect(document.querySelector(".roadmap-note button, .roadmap-note a")).toBeNull();
   });
 
-  it("connects on Arbitrum Sepolia, verifies a testnet purchase, and enables paid AI", async () => {
+  it("uses wallet-estimated fees and a fresh quote after an under-base-fee rejection", async () => {
     const address = `0x${"11".repeat(20)}`;
     const receiver = `0x${"22".repeat(20)}`;
     const txHash = `0x${"ab".repeat(32)}`;
     const paidJobId = "f".repeat(32);
     let chain = "0x1";
     let available = 0;
+    let feeFailure = true;
     const provider = {
       on: vi.fn(),
       request: vi.fn(async ({ method, params }) => {
@@ -190,7 +197,15 @@ describe("Orb frontend", () => {
         if (method === "eth_chainId") return chain;
         if (method === "wallet_switchEthereumChain") { chain = params[0].chainId; return null; }
         if (method === "personal_sign") return `0x${"cd".repeat(65)}`;
-        if (method === "eth_sendTransaction") return txHash;
+        if (method === "eth_sendTransaction") {
+          if (feeFailure) {
+            feeFailure = false;
+            const error = new Error("Internal JSON-RPC error.");
+            error.data = { message: "maxFeePerGas: 31140000 less than block baseFee: 31286000" };
+            throw error;
+          }
+          return txHash;
+        }
         throw new Error(`Unexpected wallet method: ${method}`);
       }),
     };
@@ -220,18 +235,29 @@ describe("Orb frontend", () => {
     await flush();
     chooseVideo();
     expect(document.getElementById("decode-btn").disabled).toBe(true);
-    expect(document.getElementById("upload-credits-cta").classList.contains("hidden")).toBe(false);
-    document.getElementById("upload-credits-cta").click();
-    document.getElementById("wallet-connect").click();
+    expect(document.getElementById("upload-credits-cta")).toBeNull();
+    document.getElementById("header-wallet").click();
     await flush();
     expect(provider.request.mock.calls.some(([arg]) => arg.method === "wallet_switchEthereumChain")).toBe(true);
     expect(document.getElementById("wallet-network").textContent).toContain("Arbitrum Sepolia");
     expect(document.getElementById("wallet-address").textContent).toContain("0x1111");
+    expect(document.getElementById("header-wallet").textContent).toBe("Connected");
     document.getElementById("wallet-buy").click();
     await flush();
-    expect(provider.request.mock.calls.find(([arg]) => arg.method === "eth_sendTransaction")[0].params[0]).toMatchObject({
-      from: address, to: receiver, data: "0x4f524231abcd",
-    });
+    expect(document.getElementById("wallet-feedback").textContent).toContain("fresh Market or Aggressive fee estimate");
+    expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/verify"))).toHaveLength(0);
+    document.getElementById("wallet-buy").click();
+    await flush();
+    const transactions = provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction");
+    expect(transactions).toHaveLength(2);
+    for (const [request] of transactions) {
+      expect(request.params[0]).toEqual({
+        from: address, to: receiver, value: `0x${BigInt("1000000000000").toString(16)}`,
+        data: "0x4f524231abcd",
+      });
+    }
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/credits/quotes")).toHaveLength(2);
     expect(document.getElementById("wallet-balance").textContent).toContain("1 testnet credit");
     expect(document.getElementById("decode-btn").disabled).toBe(false);
     document.getElementById("wallet-close").click();
@@ -247,7 +273,7 @@ describe("Orb frontend", () => {
   it("pauses a paid 401 and resumes the same job and durable result after signing again", async () => {
     const { jobId, provider, fetchMock } = await startPaidJobWithExpiredSession();
     expect(document.getElementById("job-error").textContent).toBe(
-      "Your session expired. Sign again to continue this analysis.");
+      "Session expired — sign again to continue this analysis.");
     expect(document.getElementById("wallet-panel").classList.contains("hidden")).toBe(false);
     expect(document.getElementById("wallet-connect").textContent).toBe("Sign again");
     expect(JSON.parse(sessionStorage.getItem("orb-active-paid-job")).jobId).toBe(jobId);
@@ -340,7 +366,7 @@ describe("Orb frontend", () => {
     await flush();
 
     expect(document.getElementById("decode-btn").disabled).toBe(true);
-    expect(document.getElementById("decode-btn").querySelector("span").textContent).toBe("Initializing");
+    expect(document.getElementById("decode-btn").querySelector("span").textContent).toBe("Preparing Orb…");
     expect(inspectCalls(fetchMock)).toHaveLength(0);
   });
 
@@ -393,6 +419,8 @@ describe("Orb frontend", () => {
     expect(document.querySelectorAll("#res-scenes .scene")).toHaveLength(1);
     expect(document.getElementById("res-prompt").textContent).toContain("A blue car");
     expect(document.getElementById("res-notice").textContent).toContain("cannot be guaranteed");
+    expect(document.getElementById("screen-results").textContent).not.toMatch(/Gemini/i);
+    expect(document.getElementById("res-mode").textContent).toContain("plausible reconstruction");
   });
 
   it("labels an interrupted upload without retrying", async () => {
@@ -489,7 +517,66 @@ describe("Orb frontend", () => {
     input.dispatchEvent(new Event("input"));
     document.getElementById("enhance-btn").click();
     await flush();
-    expect(document.getElementById("phase-text").textContent).toBe("Improving prompt");
+    expect(document.getElementById("phase-text").textContent).toBe("Enhancing prompt…");
     expect(document.getElementById("step-list").textContent).not.toContain("Detecting scenes");
+  });
+
+  it("shows the Orb mark during video scene analysis and hides provider details", async () => {
+    mockApi({ jobStatuses: [{ state: "processing", stage: "Analyzing scenes (2/3)" }] });
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    document.getElementById("decode-btn").click();
+    await flush();
+    const loader = document.querySelector("#screen-processing .orb-spin svg.processing-planet");
+    expect(loader).not.toBeNull();
+    expect(loader.querySelector("ellipse")).not.toBeNull();
+    expect(loader.querySelector("circle")).not.toBeNull();
+    expect(document.getElementById("phase-text").textContent).toBe("Analyzing scenes…");
+    expect(document.getElementById("phase-detail").textContent).toBe("Scene 2 of 3");
+    expect(document.getElementById("screen-processing").textContent).not.toMatch(/Gemini|FFmpeg|FFprobe/i);
+  });
+
+  it("keeps mode copy and controls distinct while switching without a reload", async () => {
+    mockApi();
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    expect(document.getElementById("file-card").classList.contains("hidden")).toBe(false);
+    document.getElementById("mode-compose").click();
+    expect(document.getElementById("file-card").classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("mode-description").textContent).toContain("new generation-ready prompt");
+    expect(document.getElementById("mode-compose").getAttribute("aria-current")).toBe("page");
+    document.getElementById("mode-enhance").click();
+    expect(document.getElementById("enhance-shell").classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("upload-shell").classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("mode-description").textContent).toContain("does not generate media yet");
+    document.getElementById("mode-decode").click();
+    expect(document.getElementById("mode-description").textContent).toContain("plausible generation prompt");
+    expect(document.getElementById("enhance-shell").classList.contains("hidden")).toBe(true);
+    expect(document.querySelectorAll(".mode-pill.active")).toHaveLength(1);
+  });
+
+  it("replaces provider-specific job errors with Orb wording", async () => {
+    mockApi({ jobStatuses: [{ state: "error", stage: "Interrupted", error: "Gemini provider unavailable" }] });
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    document.getElementById("decode-btn").click();
+    await flush();
+    expect(document.getElementById("job-error").textContent).toContain("Orb AI is temporarily unavailable");
+    expect(document.getElementById("screen-processing").textContent).not.toMatch(/Gemini/i);
+  });
+
+  it("uses a 980px desktop frame, centered close icon, and mobile safe-area rules", () => {
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.appendChild(style);
+    expect(getComputedStyle(document.querySelector(".app-frame")).maxWidth).toBe("980px");
+    expect(getComputedStyle(document.getElementById("wallet-close")).display).toBe("grid");
+    expect(css).toMatch(/\.about-close\s*\{[^}]*place-items:\s*center/);
+    expect(css).toMatch(/@media \(max-width: 600px\)[\s\S]*?safe-area-inset-bottom/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.processing-planet/);
+    expect(document.querySelector("#wallet-close svg path").getAttribute("d")).toBe("M5 5 19 19M19 5 5 19");
   });
 });

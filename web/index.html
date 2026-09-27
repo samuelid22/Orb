@@ -31,7 +31,9 @@
       </span>
       <span class="wordmark">Orb</span>
     </div>
-    <div class="menu-wrap">
+    <div class="header-actions">
+      <button id="header-wallet" class="header-wallet" type="button" aria-label="Connect wallet" aria-controls="wallet-panel" aria-expanded="false">Connect Wallet</button>
+      <div class="menu-wrap">
       <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Open menu" aria-controls="site-menu" aria-expanded="false">
         <span></span><span></span><span></span>
       </button>
@@ -54,13 +56,14 @@
           <button id="menu-about" class="menu-item menu-action" type="button">About Orb</button>
         </div>
       </nav>
+      </div>
     </div>
   </header>
 
   <section id="about-panel" class="about-panel hidden" role="dialog" aria-labelledby="about-title" aria-modal="false">
     <div class="about-head">
       <h2 id="about-title">About Orb</h2>
-      <button id="about-close" class="about-close" type="button" aria-label="Close About Orb">×</button>
+      <button id="about-close" class="about-close" type="button" aria-label="Close About Orb"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19"/></svg></button>
     </div>
     <p>Orb helps turn visual references into creative direction.</p>
     <ul>
@@ -73,9 +76,9 @@
   <section id="wallet-panel" class="about-panel wallet-panel hidden" role="dialog" aria-labelledby="wallet-title" aria-modal="false">
     <div class="about-head">
       <h2 id="wallet-title">Wallet &amp; Credits</h2>
-      <button id="wallet-close" class="about-close" type="button" aria-label="Close Wallet & Credits">×</button>
+      <button id="wallet-close" class="about-close" type="button" aria-label="Close Wallet & Credits"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19"/></svg></button>
     </div>
-    <p class="testnet-callout"><strong>Arbitrum Sepolia · TESTNET ONLY</strong><br>Credits are for demo/testing and have no real-money value. You may need testnet ETH for the transfer and gas.</p>
+    <p class="testnet-callout"><strong>Arbitrum Sepolia · TESTNET ONLY</strong><br>Demo credits have no real-money value. Testnet ETH is needed for payment and gas.</p>
     <p id="wallet-network" class="wallet-line">Wallet not connected.</p>
     <p id="wallet-address" class="wallet-line"></p>
     <p id="wallet-balance" class="wallet-balance">0 testnet credits available</p>
@@ -101,6 +104,7 @@
         <h1>Every visual starts with an idea.</h1>
         <p class="hero-sub">Decode, compose and enhance your creative prompts.</p>
       </div>
+      <p id="mode-description" class="mode-description">Reconstruct a plausible generation prompt from an image or video.</p>
 
       <div id="upload-shell" class="upload-shell">
         <div id="dropzone" class="dropzone" aria-label="Image or video upload area">
@@ -125,11 +129,10 @@
           <div class="file-meta" id="file-meta"></div>
           <button id="file-clear" class="btn ghost" type="button">Choose a different file</button>
           <button id="decode-btn" class="btn primary block initializing" type="button" disabled>
-            <span>Initializing</span><small>Orb service waking up</small>
+            <span>Preparing Orb…</span><small>One moment</small>
           </button>
         </div>
-        <div id="service-status" class="service-status" role="status" aria-live="polite">Connecting to the Orb service…</div>
-        <button id="upload-credits-cta" class="btn ghost credit-cta hidden" type="button">Connect wallet or buy testnet credits</button>
+        <div id="service-status" class="service-status" role="status" aria-live="polite">Preparing Orb…</div>
         <div id="upload-error" class="error hidden" role="alert"></div>
       </div>
 
@@ -142,8 +145,7 @@
           <label>Detail <select id="enhance-detail"><option value="balanced">Balanced</option><option value="concise">Concise</option><option value="detailed">Detailed</option></select></label>
         </div>
         <button id="enhance-btn" class="btn primary block" type="button" disabled>Enhance prompt</button>
-        <div id="enhance-status" class="service-status" role="status" aria-live="polite">Connecting to the Orb service…</div>
-        <button id="enhance-credits-cta" class="btn ghost credit-cta hidden" type="button">Connect wallet or buy testnet credits</button>
+        <div id="enhance-status" class="service-status" role="status" aria-live="polite">Preparing Orb…</div>
         <div id="enhance-error" class="error hidden" role="alert"></div>
       </div>
 
@@ -152,18 +154,29 @@
         <button id="mode-compose" class="mode-pill" type="button">Compose</button>
         <button id="mode-enhance" class="mode-pill" type="button">Enhance</button>
       </nav>
+      <p class="roadmap-note">Your next step: <span>Generate · Coming soon</span></p>
       <p class="testnet-note">Arbitrum Sepolia testnet credits · Demo only · No real-money value</p>
     </section>
 
     <section id="screen-processing" class="screen hidden secondary-screen" tabindex="-1">
       <div class="processing-head">
-        <div class="orb-spin" aria-hidden="true"></div>
-        <div id="phase-text" class="phase" role="status" aria-live="polite">Starting…</div>
+        <div class="orb-spin" aria-hidden="true">
+          <svg class="processing-planet" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="loader-planet-fill" x1=".15" y1=".05" x2=".85" y2=".95"><stop stop-color="#D4F2FF"/><stop offset=".46" stop-color="#75BCFF"/><stop offset="1" stop-color="#2777DE"/></linearGradient>
+              <linearGradient id="loader-ring-fill" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#9DD8FF"/><stop offset="1" stop-color="#367EE1"/></linearGradient>
+            </defs>
+            <ellipse cx="40" cy="40" rx="35" ry="10" transform="rotate(-32 40 40)" fill="none" stroke="url(#loader-ring-fill)" stroke-width="5"/>
+            <circle cx="40" cy="40" r="24" fill="url(#loader-planet-fill)"/>
+            <path d="M10 56c13 4 43-11 61-31" fill="none" stroke="#B5E3FF" stroke-width="5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div id="phase-text" class="phase" role="status" aria-live="polite">Preparing Orb…</div>
         <div id="phase-detail" class="phase-detail"></div>
       </div>
       <ol id="step-list" class="steps" aria-label="Processing stages"></ol>
       <div class="progress" role="progressbar" aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="upload-bar" class="progress-bar"></div></div>
-      <p class="hint">Stages advance as the Orb engine reports them.</p>
+      <p class="hint">Your prompt is taking shape.</p>
       <div id="job-error" class="error hidden" role="alert"></div>
       <button id="back-btn" class="btn ghost hidden" type="button">Back to upload</button>
     </section>
@@ -173,7 +186,7 @@
         <p id="res-eyebrow" class="eyebrow">Decoded reference</p>
         <h2 id="res-title"></h2>
         <div id="res-chips" class="chips"></div>
-        <div id="res-mode" class="res-mode">AI analysis · original prompt cannot be guaranteed</div>
+        <div id="res-mode" class="res-mode">Orb AI · a plausible reconstruction</div>
       </div>
 
       <div id="res-preview-card" class="card video-card hidden">

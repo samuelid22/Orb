@@ -96,12 +96,20 @@ describe("Orb wallet authentication UI", () => {
     const wallet = renderWallet();
     await flush();
     expect(document.getElementById("wallet-connect").textContent).toBe("Sign again");
-    document.getElementById("wallet-connect").click();
+    expect(document.getElementById("header-wallet").textContent).toBe("Connect Wallet");
+    document.getElementById("header-wallet").click();
     await flush();
 
     const button = document.getElementById("wallet-connect");
     expect(button.textContent).toBe("Connected");
     expect(button.disabled).toBe(true);
+    expect(document.getElementById("header-wallet").textContent).toBe("Connected");
+    expect(document.getElementById("header-wallet").getAttribute("aria-expanded")).toBe("true");
+    document.getElementById("wallet-close").click();
+    expect(document.getElementById("header-wallet").getAttribute("aria-expanded")).toBe("false");
+    document.getElementById("header-wallet").click();
+    expect(document.getElementById("wallet-panel").classList.contains("hidden")).toBe(false);
+    expect(provider.request.mock.calls.filter(([request]) => request.method === "personal_sign")).toHaveLength(1);
     expect(wallet.isAuthenticated()).toBe(true);
     expect(document.getElementById("wallet-address").title).toBe(firstAddress);
     expect(document.getElementById("wallet-balance").textContent).toContain("2 testnet credits");
@@ -126,6 +134,7 @@ describe("Orb wallet authentication UI", () => {
     await flush();
     expect(wallet.isAuthenticated()).toBe(true);
     expect(document.getElementById("wallet-connect").textContent).toBe("Connected");
+    expect(document.getElementById("header-wallet").textContent).toBe("Connected");
   });
 
   it("restores a valid backend session after reload without another signature", async () => {
@@ -154,6 +163,7 @@ describe("Orb wallet authentication UI", () => {
 
     expect(wallet.isAuthenticated()).toBe(false);
     expect(document.getElementById("wallet-connect").textContent).toBe("Sign again");
+    expect(document.getElementById("header-wallet").textContent).toBe("Connect Wallet");
     expect(sessionStorage.getItem(sessionKey)).toBeNull();
   });
 

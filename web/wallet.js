@@ -14,6 +14,7 @@ export function initWallet({ onBalance }) {
   const panel = el("wallet-panel");
   const feedback = el("wallet-feedback");
   const connectButton = el("wallet-connect");
+  const headerButton = el("header-wallet");
   const disconnectButton = el("wallet-disconnect");
   const switchButton = el("wallet-switch");
   const buyButton = el("wallet-buy");
@@ -49,7 +50,7 @@ export function initWallet({ onBalance }) {
   function setFeedback(message) { feedback.textContent = message; }
 
   function update() {
-    el("wallet-address").textContent = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
+    el("wallet-address").textContent = address ? `Authenticated wallet · ${address.slice(0, 6)}…${address.slice(-4)}` : "";
     el("wallet-address").title = address || "";
     el("wallet-balance").textContent = `${balance} testnet credit${balance === 1 ? "" : "s"} available`;
     el("wallet-purchase").classList.toggle("hidden", !verified || !config?.enabled);
@@ -57,6 +58,10 @@ export function initWallet({ onBalance }) {
     disconnectButton.disabled = busy;
     connectButton.textContent = verified ? "Connected" : token ? "Retry session" : walletAccount ? "Sign again" : "Connect and sign";
     connectButton.disabled = busy || verified || !config?.enabled;
+    headerButton.textContent = verified ? "Connected" : "Connect Wallet";
+    headerButton.setAttribute("aria-label", verified ? "Wallet connected. Open Wallet & Credits" : "Connect wallet");
+    headerButton.classList.toggle("connected", verified);
+    headerButton.disabled = busy;
     buyButton.disabled = busy || !verified;
     retryButton.disabled = busy || !verified;
     onBalance(balance);
@@ -234,7 +239,7 @@ export function initWallet({ onBalance }) {
     const currentToken = token;
     const epoch = authEpoch;
     retryButton.classList.remove("hidden");
-    setFeedback(`Verifying transaction ${pending.txHash.slice(0, 10)}… on Arbitrum Sepolia.`);
+    setFeedback("Verifying payment on Arbitrum Sepolia…");
     try {
       const result = await json(`/api/orb/credits/quotes/${encodeURIComponent(pending.quoteId)}/verify`, {
         method: "POST", headers: { "Content-Type": "application/json", ...headers() },
@@ -271,9 +276,15 @@ export function initWallet({ onBalance }) {
       }] });
       if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error("Wallet did not return a valid transaction hash.");
       sessionStorage.setItem(PENDING_KEY, JSON.stringify({ quoteId: quote.quote_id, txHash, wallet: address }));
-      setFeedback("Transaction sent. Waiting for independent server verification…");
+      setFeedback("Payment submitted. Verifying payment…");
       void verifyPending();
-    } catch (error) { setFeedback(error.message || "Testnet payment was cancelled."); }
+    } catch (error) {
+      const feeError = [error?.message, error?.data?.message, error?.data?.originalError?.message]
+        .filter((message) => typeof message === "string").join(" ");
+      if (/(?:max\s*fee\s*per\s*gas|maxFeePerGas).*(?:base\s*fee|baseFee)/i.test(feeError)) {
+        setFeedback("MetaMask's gas estimate fell below Arbitrum Sepolia's current base fee. Check your wallet activity before retrying Buy Credits with a fresh Market or Aggressive fee estimate. Orb did not receive a transaction hash.");
+      } else setFeedback(error.message || "Testnet payment was cancelled.");
+    }
     finally { busy = false; update(); }
   }
 
@@ -308,14 +319,19 @@ export function initWallet({ onBalance }) {
     update();
   }
 
-  function open() { panel.classList.remove("hidden"); el("wallet-close").focus(); }
+  function open() { panel.classList.remove("hidden"); headerButton.setAttribute("aria-expanded", "true"); el("wallet-close").focus(); }
   function close(restoreFocus = false) {
     panel.classList.add("hidden");
-    if (restoreFocus) el("menu-toggle").focus();
+    headerButton.setAttribute("aria-expanded", "false");
+    if (restoreFocus) headerButton.focus();
   }
 
   el("wallet-close").addEventListener("click", () => close(true));
   connectButton.addEventListener("click", () => void (token && !verified ? refresh() : connect()));
+  headerButton.addEventListener("click", () => {
+    open();
+    if (!verified) void (token ? refresh() : connect());
+  });
   disconnectButton.addEventListener("click", () => void disconnect());
   switchButton.addEventListener("click", async () => {
     try { await switchNetwork(); setFeedback("Arbitrum Sepolia selected. Connect and sign to continue."); }

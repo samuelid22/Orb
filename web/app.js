@@ -10,9 +10,9 @@ const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const SERVICE_RETRY_MS = 2000;
 const SERVICE_DEADLINE_MS = 100000;
 const STEP_LABELS = {
-  video: ["Uploading", "Reading structure", "Analyzing scenes", "Preparing results"],
-  image: ["Uploading", "Analyzing image", "Generating prompt", "Preparing results"],
-  enhance: ["Starting", "Improving prompt", "Reviewing response", "Preparing results"],
+  video: ["Uploading…", "Reading video structure…", "Analyzing scenes…", "Preparing results…"],
+  image: ["Uploading…", "Analyzing image…", "Preparing prompt…", "Preparing results…"],
+  enhance: ["Preparing Orb…", "Enhancing prompt…", "Reviewing response…", "Preparing results…"],
 };
 const STEP_IDS = ["uploading", "structure", "scenes", "results"];
 const ACTIVE_JOB_KEY = "orb-active-paid-job";
@@ -39,6 +39,7 @@ const els = {
   modeDecode: document.getElementById("mode-decode"),
   modeCompose: document.getElementById("mode-compose"),
   modeEnhance: document.getElementById("mode-enhance"),
+  modeDescription: document.getElementById("mode-description"),
   enhanceShell: document.getElementById("enhance-shell"),
   promptInput: document.getElementById("prompt-input"),
   enhanceOutput: document.getElementById("enhance-output"),
@@ -81,8 +82,6 @@ const els = {
   menuWallet: document.getElementById("menu-wallet"),
   aboutPanel: document.getElementById("about-panel"),
   aboutClose: document.getElementById("about-close"),
-  uploadCreditsCta: document.getElementById("upload-credits-cta"),
-  enhanceCreditsCta: document.getElementById("enhance-credits-cta"),
 };
 
 const decodeLabel = els.decodeBtn.querySelector("span");
@@ -163,6 +162,15 @@ function showError(box, message) {
   box.classList.remove("hidden");
 }
 
+function cleanServiceError(message, fallback = "Orb AI is temporarily unavailable. Try again.") {
+  if (typeof message !== "string" || !message.trim()) return fallback;
+  if (/insufficient credit|credit required|no credits/i.test(message)) return "A testnet credit is needed. Open Wallet & Credits to continue.";
+  if (/session expired|authentication required|unauthorized/i.test(message)) return "Session expired — sign again to continue.";
+  if (/unsupported|file format|file too large|upload limit/i.test(message)) return "Unsupported upload. Use JPEG, PNG, WebP, MP4, MOV, M4V, or WebM within the stated size limit.";
+  if (/prompt.*(?:too long|empty|invalid)/i.test(message)) return "Check your prompt and try again.";
+  return fallback;
+}
+
 async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -190,8 +198,8 @@ function uploadAttemptUrl(endpoint, attemptId) {
 function setServiceState(ready) {
   serviceReady = ready;
   els.decodeBtn.classList.toggle("initializing", !ready);
-  decodeLabel.textContent = ready ? (currentMode === "compose" ? "Compose prompt" : "Decode reference") : "Initializing";
-  decodeDetail.textContent = ready ? "Analyze with Orb AI" : "Orb service waking up";
+  decodeLabel.textContent = ready ? (currentMode === "compose" ? "Compose prompt" : "Decode reference") : "Preparing Orb…";
+  decodeDetail.textContent = ready ? "Analyze with Orb AI" : "One moment";
   syncDecodeButton();
 }
 
@@ -204,14 +212,12 @@ function syncDecodeButton() {
   const needsCredits = creditMode === "credits" && !wallet?.hasCredit();
   if (creditMode === "credits" && serviceReady) {
     els.serviceStatus.textContent = needsCredits
-      ? "Orb service ready. Connect a wallet or buy testnet credits to use AI."
+      ? "A testnet credit is needed. Use Connect Wallet in the header to get started."
       : "Orb service ready. Testnet credit available.";
     syncEnhanceStatus();
   }
   els.decodeBtn.disabled = !selectedFile || !serviceReady || actionBusy || needsCredits;
   els.enhanceBtn.disabled = els.promptInput.value.trim().length < 3 || !serviceReady || actionBusy || needsCredits;
-  els.uploadCreditsCta.classList.toggle("hidden", creditMode !== "credits" || !needsCredits);
-  els.enhanceCreditsCta.classList.toggle("hidden", creditMode !== "credits" || !needsCredits);
   els.menuHome.disabled = actionBusy;
   for (const button of [els.modeDecode, els.modeCompose, els.modeEnhance]) button.disabled = actionBusy;
 }
@@ -219,6 +225,11 @@ function syncDecodeButton() {
 function setMode(mode) {
   if (actionBusy || !["decode", "compose", "enhance"].includes(mode)) return;
   currentMode = mode;
+  els.modeDescription.textContent = mode === "decode"
+    ? "Reconstruct a plausible generation prompt from an image or video."
+    : mode === "compose"
+      ? "Create a new generation-ready prompt from a visual reference."
+      : "Improve an existing image or video generation prompt. Orb does not generate media yet.";
   activeMediaKind = null;
   clearFile();
   els.uploadError.classList.add("hidden");
@@ -272,8 +283,8 @@ async function waitForService() {
           if (healthBody.orb_ai_access === "configuration_required" || healthBody.orb_ai_access === "credits_unavailable") {
             setServiceState(false);
             els.serviceStatus.textContent = healthBody.orb_ai_access === "configuration_required"
-              ? "Orb AI needs a server-side provider key and local testing configuration."
-              : "AI operations are paused until verified credits are available.";
+              ? "Orb AI is temporarily unavailable. Try again."
+              : "Testnet credits are temporarily unavailable. Try again.";
             els.serviceStatus.classList.add("failed");
             syncEnhanceStatus();
             return false;
@@ -284,7 +295,7 @@ async function waitForService() {
             const ping = await pingUploadPath();
             if (ping === "ok" || ping === "unsupported") {
               els.serviceStatus.textContent = creditMode === "credits" && !wallet.hasCredit()
-                ? "Orb service ready. Connect a wallet or buy testnet credits to use AI."
+                ? "A testnet credit is needed. Use Connect Wallet in the header to get started."
                 : "Orb service ready.";
               els.serviceStatus.classList.add("ready");
               els.serviceStatus.classList.remove("failed");
@@ -292,7 +303,7 @@ async function waitForService() {
               setServiceState(true);
               return true;
             }
-            els.serviceStatus.textContent = "Upload service is reconnecting…";
+            els.serviceStatus.textContent = "Preparing Orb…";
           }
         }
       } catch (error) {
@@ -303,7 +314,7 @@ async function waitForService() {
       }
     }
     setServiceState(false);
-    els.serviceStatus.textContent = "The Orb service did not become ready. Check the backend and try again.";
+    els.serviceStatus.textContent = "Orb is taking longer to start. Try again shortly.";
     els.serviceStatus.classList.add("failed");
     syncEnhanceStatus();
     return false;
@@ -372,13 +383,17 @@ function clearFile() {
 /* ---------- Visual AI flow ---------- */
 
 function mapStage(stage) {
-  if (!stage || stage === "Queued") return { step: "uploading", detail: "Waiting for the engine" };
-  if (stage === "Inspecting video") return { step: "structure", detail: "Reading video metadata" };
-  if (stage === "Analyzing image" || stage === "Analyzing visual reference" || stage === "Enhancing prompt") return { step: "structure", detail: stage };
-  if (stage === "Composing prompt") return { step: "scenes", detail: stage };
-  if (stage === "Detecting scene cuts") return { step: "scenes", detail: "Measuring scene changes" };
-  if (stage === "Complete") return { step: "results", detail: "Preparing results" };
-  return { step: "scenes", detail: stage };
+  if (!stage || stage === "Queued") return { step: "uploading", label: "Preparing Orb…", detail: "Your request is in line." };
+  if (stage === "Inspecting video") return { step: "structure", label: "Reading video structure…", detail: "Looking at the reference." };
+  if (stage === "Analyzing image" || stage === "Analyzing visual reference") return { step: "structure", label: "Analyzing image…", detail: "Finding the visual details." };
+  if (stage === "Enhancing prompt") return { step: "structure", label: "Enhancing prompt…", detail: "Refining your creative direction." };
+  if (stage === "Composing prompt") return { step: "scenes", label: "Creating prompt…", detail: "Building a new prompt from your reference." };
+  if (stage === "Detecting scene cuts") return { step: "scenes", label: "Analyzing scenes…", detail: "Finding scene changes." };
+  const sceneProgress = /^Analyzing scenes \((\d+)\/(\d+)\)$/.exec(stage)
+    || /^Analyzing scene (\d+) of (\d+)$/.exec(stage);
+  if (sceneProgress) return { step: "scenes", label: "Analyzing scenes…", detail: `Scene ${sceneProgress[1]} of ${sceneProgress[2]}` };
+  if (stage === "Complete") return { step: "results", label: currentMode === "enhance" ? "Enhancing prompt…" : currentMode === "compose" ? "Creating prompt…" : "Reconstructing prompt…", detail: "Preparing your result." };
+  return { step: "scenes", label: "Orb AI is processing…", detail: "Your prompt is taking shape." };
 }
 
 function processingSteps() {
@@ -424,8 +439,8 @@ async function startVisual() {
   els.uploadProgress.classList.add("is-indeterminate");
   els.uploadProgress.removeAttribute("aria-valuenow");
   renderSteps("uploading", false);
-  els.phaseText.textContent = "Uploading reference";
-  els.phaseDetail.textContent = "Sending the file to the Orb engine";
+  els.phaseText.textContent = activeMediaKind === "video" ? "Uploading video…" : "Uploading image…";
+  els.phaseDetail.textContent = "Sending your reference to Orb.";
 
   const attemptId = visualAttemptKey || createUploadAttemptId();
   visualAttemptKey = attemptId;
@@ -486,7 +501,7 @@ async function startVisual() {
   els.uploadProgress.setAttribute("aria-valuenow", "100");
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.job_id) {
-    fail(`Could not start ${currentMode}: ${data.detail || `upload failed (${response.status})`}`);
+    fail(cleanServiceError(data.detail, `Could not start ${currentMode}. Try again.`));
     return;
   }
   currentJobId = data.job_id;
@@ -512,8 +527,8 @@ async function startEnhance() {
   showScreen("processing");
   els.jobError.classList.add("hidden");
   els.backBtn.classList.add("hidden");
-  els.phaseText.textContent = "Enhancing prompt";
-  els.phaseDetail.textContent = "Orb is refining your creative direction";
+  els.phaseText.textContent = "Enhancing prompt…";
+  els.phaseDetail.textContent = "Refining your creative direction.";
   els.uploadProgress.classList.add("is-indeterminate");
   renderSteps("structure", true);
   enhanceAttemptKey ||= createUploadAttemptId();
@@ -531,7 +546,7 @@ async function startEnhance() {
     startPolling(currentJobId);
   } catch (error) {
     actionBusy = false;
-    showError(els.jobError, `Could not enhance prompt: ${error.message || "connection interrupted"}`);
+    showError(els.jobError, cleanServiceError(error.message, "Connection interrupted. Try again."));
     els.backBtn.classList.remove("hidden");
     syncDecodeButton();
   }
@@ -560,7 +575,7 @@ function pausePaidJobForAuthentication(jobId) {
   pollPausedForAuth = true;
   pollFailures = 0;
   actionBusy = false;
-  showError(els.jobError, "Your session expired. Sign again to continue this analysis.");
+  showError(els.jobError, "Session expired — sign again to continue this analysis.");
   els.backBtn.classList.remove("hidden");
   wallet.requireAuthentication();
   syncDecodeButton();
@@ -594,7 +609,7 @@ async function pollJob(jobId) {
       schedulePoll(jobId, 1500 * pollFailures);
       return;
     }
-    showError(els.jobError, `Connection interrupted: ${error.message || "could not check decoding status"}`);
+    showError(els.jobError, "Connection interrupted. Try again. Your analysis is still saved.");
     els.backBtn.classList.remove("hidden");
     actionBusy = false;
     if (creditMode === "credits") void wallet.refresh();
@@ -604,8 +619,8 @@ async function pollJob(jobId) {
   if (jobId !== currentJobId) return;
   pollFailures = 0;
   const mapped = mapStage(job.stage || "");
-  els.phaseText.textContent = processingSteps().find((s) => s.id === mapped.step).label;
-  els.phaseDetail.textContent = job.stage || "";
+  els.phaseText.textContent = mapped.label;
+  els.phaseDetail.textContent = mapped.detail;
   renderSteps(mapped.step, true);
   if (job.state === "complete") {
     clearTimeout(pollTimer);
@@ -615,7 +630,7 @@ async function pollJob(jobId) {
     forgetPaidJob();
     visualAttemptKey = null;
     enhanceAttemptKey = null;
-    showError(els.jobError, `Analysis failed: ${job.error || "unknown error"}`);
+    showError(els.jobError, `Analysis failed: ${cleanServiceError(job.error)}`);
     currentJobId = null;
     els.backBtn.classList.remove("hidden");
     actionBusy = false;
@@ -656,7 +671,7 @@ async function fetchResult(jobId) {
     if (creditMode === "credits") void wallet.refresh();
   } catch (error) {
     if (jobId !== currentJobId) return;
-    showError(els.jobError, `Could not load results: ${error.message}`);
+    showError(els.jobError, cleanServiceError(error.message, "Could not load results. Try again."));
     els.backBtn.classList.remove("hidden");
     actionBusy = false;
     syncDecodeButton();
@@ -679,7 +694,10 @@ function renderResult(result) {
   const operation = result.operation || currentMode;
   els.resTitle.textContent = media.name || (operation === "enhance" ? "Enhanced prompt" : "Visual reference");
   els.resEyebrow.textContent = operation === "decode" ? "Decoded reference" : operation === "compose" ? "Composed from reference" : "Enhanced prompt";
-  els.resMode.textContent = `AI ${operation} · ${result.provider || "configured provider"}`;
+  els.resMode.textContent = operation === "decode"
+    ? "Orb AI · plausible reconstruction, not the creator’s exact prompt"
+    : operation === "compose" ? "Orb AI · a new prompt inspired by your reference"
+      : "Orb AI · improved prompt, ready for image or video creation";
   els.resChips.innerHTML = "";
   const chips = [
     media.width && media.height ? `${media.width}×${media.height}` : null,
@@ -738,7 +756,10 @@ function renderResult(result) {
   }
 
   els.resPromptHeading.textContent = operation === "decode" ? "Reconstructed prompt" : operation === "compose" ? "New creative prompt" : "Enhanced prompt";
-  els.resNotice.textContent = result.notice || "";
+  els.resNotice.textContent = operation === "decode"
+    ? "This is a plausible reconstruction; the creator’s exact original prompt cannot be guaranteed."
+    : operation === "compose" ? "Created from your reference, not recovered from an original prompt."
+      : "Your prompt has been refined; Orb has not generated media.";
   els.resOriginal.classList.toggle("hidden", !result.original_prompt);
   els.resOriginalText.textContent = result.original_prompt || "";
   els.resPrompt.textContent = result.prompt || "";
@@ -822,7 +843,6 @@ els.menuWallet.addEventListener("click", (event) => {
   setAboutOpen(false);
   wallet.open();
 });
-for (const button of [els.uploadCreditsCta, els.enhanceCreditsCta]) button.addEventListener("click", () => wallet.open());
 els.aboutClose.addEventListener("click", () => {
   setAboutOpen(false, true);
 });

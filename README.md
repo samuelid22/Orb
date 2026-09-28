@@ -1,251 +1,411 @@
-# ORB
+# Orb
 
-Orb is an AI-powered creative intelligence platform built for the Arbitrum
-Open House Online Buildathon. It reconstructs plausible prompts from visual
-references, composes new prompts from them, and enhances existing prompts.
+Orb is an AI-powered visual intelligence and creative prompting platform that helps creators understand, reconstruct, compose, and refine the prompts behind images and videos.
 
-This project reuses the proven Prometheus analysis engine (FFmpeg/FFprobe
-structural analysis, Gemini vision analysis, prompt reconstruction, remix) but
-is an independent project with its own frontend, branding, and infrastructure.
+It combines multimodal AI with Arbitrum Sepolia testnet credits to create a verifiable, on-chain access layer for AI-powered creative workflows.
 
-## Product modes
+Built for the **Arbitrum Open House Singapore Online Buildathon**.
 
-| Mode | Status | Description |
-| --- | --- | --- |
-| Decode | Local testing or testnet credits | Reconstruct a plausible prompt from JPEG, PNG, WebP, or a supported video. |
-| Compose | Local testing or testnet credits | Create a new prompt from an image or video reference. |
-| Enhance | Local testing or testnet credits | Improve an existing text prompt with optional preferences. |
+## Live Demo
 
-All three require a real provider key on the backend. Orb does not present
-mock analysis as a real result. Exact original creator prompts cannot be
-guaranteed.
+- **Frontend:** [Open Orb](https://orb-azure-ten.vercel.app)
+- **Backend:** [Orb API](https://orb-api-7qwv.onrender.com)
 
-## Payments
+> Orb currently runs on Arbitrum Sepolia. Credits are testnet/demo credits and have no real-money value. You need Arbitrum Sepolia testnet ETH for purchases and gas.
 
-**Arbitrum Sepolia TESTNET ONLY.** Orb credits are demo credits without
-real-money value. A wallet needs Arbitrum Sepolia testnet ETH for the transfer
-and gas. One successful Decode, Compose, or Enhance consumes one credit.
+The backend runs on Render Free and may need time to wake after inactivity. Orb displays “Preparing Orb…” while checking readiness. See [Render's Free service guide](https://render.com/docs/free) for cold-start and temporary-filesystem behavior.
 
-Orb uses an injected EIP-1193 wallet and a one-time signed, domain-bound,
-five-minute challenge. Only the recovered wallet address receives a one-hour
-in-memory browser session. The server stores a hash of the session token.
-This stage supports externally owned wallets that can use `personal_sign`;
-contract wallets are not yet supported.
+---
 
-The server issues 15-minute quotes for 1, 3, or 5 credits at the configured
-testnet ETH price. The wallet sends native testnet ETH directly to a dedicated
-configured receiving wallet, with a unique quote ID in transaction data.
-The backend verifies the Arbitrum Sepolia chain ID, receipt status, canonical
-block and confirmations, sender, destination, exact value, transaction data,
-and that the receiver has no contract code. A unique transaction-hash database
-constraint prevents duplicate grants. No Orb private key or contract is needed.
-The receiver should be a **dedicated Orb testnet wallet**; do not reuse any
-Prometheus account.
+## Why Orb
 
-Credits, quotes, purchase grants, sessions, and reservations use SQLite
-locally and Supabase Postgres in production. Local completed results remain
-files; production completed results are Postgres JSONB. Both ledger stores
-enforce uniqueness and nonnegative balances. An AI job reserves one credit
-atomically, consumes it after a durable result is written, or releases it on
-failure. Repeated requests use idempotency keys; startup reconciles
-interrupted reservations against saved results. Render restarts cannot erase
-production prompts or credit state. Paid job status and results require the
-authenticated wallet session. Uploaded media and extracted frames are
-temporary in production; recovered results include prompt and analysis text,
-without media previews.
+Generative image and video tools can produce remarkable visuals, but creators often encounter content without knowing:
 
-The inherited Nimiq payment code remains dormant. It is enabled only by an
-explicit local testing flag for inherited tests and is not used by Orb credits.
+- how it may have been prompted
+- how to describe its visual composition
+- how to turn a reference into a generation-ready prompt
+- how to improve an existing idea for modern generative models
 
-### Configure testnet credits
+Orb turns that problem into a creative workflow.
 
-Populate only the server-side environment with these values (see
-`.env.example`):
+---
 
-| Variable | Requirement |
-| --- | --- |
-| `ORB_CREDITS_ENABLED` | `1` only when all settings are ready. |
-| `ORB_PUBLIC_ORIGIN` | Exact browser origin, such as `http://127.0.0.1:5174` locally or your HTTPS origin later. |
-| `ORB_ARBITRUM_RPC_URL` | Trusted HTTPS Arbitrum Sepolia JSON-RPC endpoint. |
-| `ORB_CREDIT_RECEIVER` | Dedicated Orb Arbitrum Sepolia receiving wallet address (EOA). Never a private key. |
-| `ORB_CREDIT_PRICE_WEI` | Default `1000000000000` wei (0.000001 testnet ETH) per credit. |
-| `ORB_PAYMENT_CONFIRMATIONS` | Default `3`; backend checks canonical block and depth. |
-| `ORB_CREDIT_DB` | Optional local SQLite path, default `api_output/orb_credits.sqlite3`. |
-| `ORB_DATABASE_URL` | Production-only server-side Supabase Postgres URL; never a `VITE_*` value. |
+## Core Modes
 
-To exercise paid gating locally, set `ORB_AI_LOCAL_TESTING=0` and
-`ORB_CREDITS_ENABLED=1`, use the browser origin in `ORB_PUBLIC_ORIGIN`, and
-provide a dedicated receiver and RPC. Do not expose a local bypass to a
-public host. Testnet transfers require a funded user wallet; no private key
-is needed by Orb. This repository has not deployed a contract or sent a
-testnet payment on your behalf.
+### Decode
 
-## First public deployment preparation
+Upload an image or video and Orb reconstructs a plausible generation prompt based on:
 
-This repository is prepared for a separate Orb frontend on Vercel and a
-separate Orb API on Render. Deployment, repository publishing, paid resource
-creation, and testnet transfers require the owner's approval. Do not reuse a
-Prometheus service, database, account, or environment group.
+- subject
+- composition
+- lighting
+- camera perspective
+- movement
+- visual style
+- atmosphere
+- scene structure
 
-### Persistent credit storage with Supabase Postgres
+Decode does not claim to recover the creator's exact original prompt. It produces a plausible reconstruction based on visual evidence.
 
-Create an independent Supabase project and obtain its server-side Postgres
-connection URL. For a persistent Render backend that needs IPv4 connectivity,
-Supabase's [connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres)
-recommends the **shared Session pooler**. Set its URL in `ORB_DATABASE_URL` on
-an independent **Render Free Docker web service**. Render's
-[Free service guide](https://render.com/docs/free) confirms that local files
-are lost on restart or spin-down, so no Render disk is required or used here.
-Startup fails if production lacks a valid Postgres URL or cannot connect. The
-URL is passed to Psycopg with TLS required by default; an explicit
-`sslmode=require`, `verify-ca`, or `verify-full` is also accepted. Keep the
-database password out of source, Vercel, logs, and chat.
+### Compose
 
-On first connection, Orb creates a dedicated `orb` schema and version 1
-tables in one transaction guarded by a Postgres advisory lock. Later starts
-accept exactly schema version 1; they do not drop or rebuild existing tables.
-The database user needs permission to create that schema and its tables.
-Back up this database. Any future schema change needs an explicit versioned
-migration. Existing local SQLite credits are **not** imported automatically;
-plan and audit a one-time migration if they must carry over.
+Upload an image or video reference and Orb creates a new generation-ready prompt inspired by it.
 
-The Docker image installs FFmpeg/FFprobe and runs one Uvicorn worker on
-`0.0.0.0:${PORT:-10000}`. Let Render set `PORT`; set the health-check path
-to `/api/ready`. The output and upload directories are temporary inside
-`/tmp` and are removed after processing. Postgres stores the deliverable
-prompt/analysis JSON before credit settlement. On restart, Orb consumes a
-reserved credit only when that result exists in Postgres; otherwise it
-releases the reservation. A result remains available through its paid job
-ID after a Render restart. Keep one backend instance for this initial
-deployment so restart reconciliation cannot race an active worker.
+Compose is designed for creators who want to reuse the visual language, mood, structure, or cinematography of a reference without attempting to recover its original instructions.
 
-Enter these variables **manually in the independent Orb Render service**.
-Use placeholders here; never add real values to source or `VITE_*` settings.
+### Enhance
 
-| Variable | Production value |
-| --- | --- |
-| `ORB_ENV` | `production` |
-| `ORB_AI_PROVIDER` | `gemini` |
-| `ORB_AI_MODEL` | `gemini-3.5-flash-lite` (or the verified working model) |
-| `GEMINI_API_KEY` | `<server-side-secret>` |
-| `ORB_AI_LOCAL_TESTING` | `0` |
-| `ORB_CREDITS_ENABLED` | `1` |
-| `ORB_PUBLIC_ORIGIN` | `https://<exact-Orb-Vercel-production-domain>` |
-| `ORB_ARBITRUM_RPC_URL` | `https://<trusted-Arbitrum-Sepolia-RPC>` (server-side, including any provider credential) |
-| `ORB_CREDIT_RECEIVER` | `0x<dedicated-Orb-Arbitrum-Sepolia-EOA>` (public address only) |
-| `ORB_CREDIT_PRICE_WEI` | `1000000000000` for the current one-credit testnet price |
-| `ORB_PAYMENT_CONFIRMATIONS` | `3` |
-| `ORB_DATABASE_URL` | `postgresql://<user>:<password>@<Supabase-host>:<port>/<database>?sslmode=require` (server-side secret) |
-| `ORB_UPLOAD_DIR` | `/tmp/orb_uploads` |
+Paste an existing image or video prompt and Orb refines it into a more deliberate generation-ready instruction.
 
-Do not set `ORB_ENABLE_NIMIQ_PAYMENTS`, any `PROMETHEUS_*` setting, a wallet
-private key, or an Orb `.env` file on Render. Production startup rejects
-inherited Prometheus configuration. CORS allows only `ORB_PUBLIC_ORIGIN`,
-which must be the exact HTTPS browser origin used for wallet challenges.
-Preview domains need a separate explicitly configured backend or will not
-be able to authenticate; do not use a wildcard origin.
+Enhance can improve:
 
-### Independent Vercel frontend
+- composition
+- lighting
+- camera direction
+- atmosphere
+- visual detail
+- motion language
+- scene consistency
 
-Create a new Orb Vercel project with this repository's **root directory** as
-the project root. `vercel.json` selects Vite, runs `npm run build:vercel`, and
-publishes `web_dist`. Set only this frontend-safe production variable:
+Choose an image or video target, an optional visual style, and a level of detail. Orb displays the original and improved prompts. Enhance improves text; it does not generate media.
 
-| Variable | Production value |
-| --- | --- |
-| `VITE_API_BASE_URL` | `https://<independent-Orb-Render-service>.onrender.com` (origin only) |
+### Create — Coming Soon
 
-The Vercel build fails if this value is missing, non-HTTPS, localhost, or has
-a path or credentials. Do not put Gemini keys, RPC credentials, or wallet
-secrets in Vercel. Local `npm run dev` still proxies `/api` to loopback port
-8790; production browser requests use `VITE_API_BASE_URL` directly. Confirm
-that the final Vercel domain exactly matches Render's `ORB_PUBLIC_ORIGIN`
-before allowing wallet payments.
+Orb's planned Create mode will turn the knowledge produced by Decode, Compose, and Enhance into finished images and videos using advanced generative media models.
 
-### Manual setup sequence
+The long-term Orb workflow is:
 
-1. After approving independent infrastructure, create an Orb-only Supabase
-   project. In **Connect**, copy the Postgres **Session pooler** URI and add
-   `sslmode=require` if it is absent. Keep the URI private; no Supabase
-   service-role API key is needed. Ensure its database user can create an
-   `orb` schema. Do not manually create the tables.
-2. Create an independent Render **Free** Docker web service from Orb's
-   `Dockerfile`, with no disk and one running instance. Set the server-side
-   variables below, including `ORB_DATABASE_URL`, and `ORB_UPLOAD_DIR=/tmp/orb_uploads`.
-   Set its health check to `/api/ready`. Verify startup creates schema version
-   1 and that `/api/health` and `/api/orb/credits/config` report the expected
-   provider, paid mode, and Arbitrum Sepolia chain. A failed database
-   connection must prevent startup.
-3. Create the separate Vercel project, set only `VITE_API_BASE_URL` to the
-   exact Render HTTPS origin, and set Render's `ORB_PUBLIC_ORIGIN` to the exact
-   Vercel HTTPS browser origin. Verify CORS and wallet signing from that origin.
-4. With separate approval for a testnet transfer, run the one-credit purchase
-   and Decode check below, then restart Render and verify the paid result and
-   balance still load from Postgres. Review backup and schema migration access
-   before using real user wallets.
+**Decode → Compose → Enhance → Create**
 
-### Approval and post-deployment checks
+Understand → Build → Refine → Realize
 
-After approving an independent repo push and creating the independent
-Supabase project, create the Render Free backend, enter its variables, and
-confirm public
-`/api/health` reports Gemini and `orb_ai_access=credits`, `/api/ready` reports
-`ready`, and `/api/orb/credits/config` reports enabled on chain 421614. Then
-create the Orb Vercel project, set `VITE_API_BASE_URL`, and verify its exact
-domain matches `ORB_PUBLIC_ORIGIN`. A production `ORB_AI_LOCAL_TESTING=1`,
-missing Postgres URL, missing API key, or wrong origin prevents a safe launch.
+Create is visibly locked and unavailable. Its information popover explains the roadmap; it does not run an AI operation or charge credits. Orb currently returns prompts, not generated images or videos.
 
-Only after both deployments are live and the owner authorizes a testnet
-payment: connect MetaMask, switch to Arbitrum Sepolia, sign the challenge,
-inspect the current balance, buy one testnet credit, wait for verification,
-run one Decode, confirm a real Gemini result and exactly one credit consumed,
-then restart the backend and confirm the wallet balance and result persist.
-No deployment payment success is claimed from automated tests alone.
+### Inputs and Results
 
-## Local development
+- **Images:** JPEG, PNG, and WebP, up to 20 MB.
+- **Videos:** MP4, MOV, M4V, and WebM, up to 200 MB, subject to media validation.
+- **Enhance:** an existing prompt of 3–4,000 characters.
+- **Results:** a generation-ready prompt with visual analysis where applicable, and a Copy Prompt action.
 
-Python 3.12+ and Node 22+ are required.
+---
+
+## Arbitrum Integration
+
+Orb uses **Arbitrum Sepolia** for its testnet credit system.
+
+Users can:
+
+1. Connect an EVM-compatible injected wallet, such as MetaMask.
+2. Authenticate using a signed challenge.
+3. Purchase testnet Orb credits.
+4. Use one credit per successful Decode, Compose, or Enhance operation.
+5. Receive the resulting prompt.
+6. Have the credit settled only after a successful result is safely stored.
+
+### Network
+
+- **Network:** Arbitrum Sepolia
+- **Chain ID:** `421614`
+- **Payment asset:** native testnet ETH
+- **Credit type:** demo/test credits only
+
+The Buy Credits panel offers 1, 3, or 5 credits. The default price is `1000000000000` wei (0.000001 testnet ETH) per credit, plus wallet-estimated gas. The server quote supplies the configured price and receiving address; the user approves every transfer in their wallet.
+
+Orb independently verifies payment receipts before granting credits. It checks the chain, successful receipt, canonical block and required confirmations, authenticated sender, dedicated receiving wallet, exact payment value, and quote identifier in transaction data.
+
+Payments use a direct native ETH transfer to a dedicated testnet receiving wallet. Orb does not need a payment contract or a wallet private key. Authentication currently supports externally owned wallets using `personal_sign`; contract-wallet authentication is not implemented.
+
+---
+
+## Credit Safety
+
+Orb's paid AI flow is designed to prevent duplicate charges and unfair credit loss.
+
+The backend:
+
+- verifies wallet ownership using a nonce-based, domain-bound, expiring signed challenge
+- prevents duplicate payment grants using a unique transaction constraint
+- reserves credits atomically
+- uses idempotency keys to prevent duplicate AI submissions
+- consumes one credit only after a result is safely stored
+- releases the reservation if the AI operation fails before producing a durable result
+- preserves completed results across backend restarts
+- allows same-wallet recovery after wallet-session expiry
+
+Wallet sessions last one hour. The browser keeps its token in session storage; the backend persists a hash of that token and its expiry in the ledger. If a paid job's session expires, Orb pauses polling and asks the user to sign again. Authenticating the same wallet resumes the existing job without a new reservation or charge. Another wallet cannot access that job or result.
+
+Disconnect Wallet clears the browser's wallet, payment, and saved-job state and requests backend session revocation. If server sign-out cannot be confirmed, Orb reports that the old session will expire. Disconnecting does not erase purchased credits or send a blockchain transaction.
+
+---
+
+## Architecture
+
+### Frontend
+
+- Vanilla JavaScript
+- Vite
+- Vercel
+- EIP-1193 wallet integration
+
+### Backend
+
+- Python
+- FastAPI
+- Uvicorn
+- FFmpeg / FFprobe
+- multimodal AI provider integration
+- Render
+
+### Persistence
+
+- PostgreSQL on Supabase in production
+- SQLite for local development
+- persistent wallet sessions and credit balances
+- payment quotes and verified purchases
+- job reservations and credit settlement
+- completed AI results
+
+Production stores completed prompt and analysis data in Postgres JSONB. Local development stores completed results in files alongside its SQLite ledger. Production does not depend on a persistent Render disk.
+
+### Blockchain
+
+- Arbitrum Sepolia
+- native testnet ETH payments
+- server-side transaction verification
+
+---
+
+## Video Processing
+
+For video Decode and Compose, Orb:
+
+1. validates the uploaded media
+2. inspects it with FFprobe
+3. detects scene structure
+4. samples representative frames
+5. analyzes scene-level and global visual information
+6. constructs the resulting generation prompt
+
+The uploaded source media is temporary and is not used as permanent production application storage. Production cleans up source files and extracted frames after processing. Durable recovery restores prompt and analysis text, without media previews. Local development retains result files and previews for inspection.
+
+---
+
+## Security
+
+Orb keeps sensitive configuration server-side.
+
+The frontend never receives:
+
+- AI API keys
+- database credentials
+- wallet private keys
+- recovery phrases
+- backend secrets
+
+Orb uses signed wallet challenges for authentication and validates paid operations server-side. Wallet authentication includes nonce replay protection, expiry, chain, and exact browser-origin checks. Production CORS allows the configured Orb frontend origin, not a wildcard.
+
+Public AI operations require an authenticated wallet and available credits. The unpaid development bypass requires explicit local settings and a loopback request; production startup rejects that bypass.
+
+---
+
+## Running Locally
+
+### Requirements
+
+- Python 3.12+
+- Node.js 22+ and npm
+- FFmpeg and FFprobe available on `PATH`
+- a server-side Gemini API key and access to the selected model
+- an injected EVM wallet and Arbitrum Sepolia testnet ETH for payment testing
+
+SQLite is included with Python and initialized automatically; Supabase is not required locally.
+
+Run the following commands from the Orb repository root in two separate PowerShell terminals.
+
+### Backend
+
+Create the Python environment and install dependencies. `python-dotenv` is needed for Uvicorn's explicit `--env-file` option.
 
 ```powershell
-# Backend (terminal 1)
 python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-$env:ORB_ENV="local"
-$env:ORB_AI_LOCAL_TESTING="1"
-$env:ORB_AI_PROVIDER="gemini"
-$env:GEMINI_API_KEY="your-own-development-key"
-.venv\Scripts\python -m uvicorn prometheus.api.app:app --host 127.0.0.1 --port 8790
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt python-dotenv
+if (!(Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
 ```
 
+Edit `.env` privately. This example uses placeholders only:
+
+```env
+ORB_ENV=local
+ORB_AI_PROVIDER=gemini
+ORB_AI_MODEL=gemini-3.5-flash-lite
+GEMINI_API_KEY=<your-server-side-api-key>
+ORB_AI_LOCAL_TESTING=1
+ORB_CREDITS_ENABLED=0
+ORB_PUBLIC_ORIGIN=http://127.0.0.1:5174
+```
+
+Use a model available to your provider account. The model above was verified during Orb's local AI testing. A real provider key is required; Orb does not substitute mock output for genuine analysis.
+
+Local development also supports `ORB_AI_PROVIDER=openai` with a server-side `OPENAI_API_KEY`. The production configuration requires Gemini.
+
+Start the backend with the local environment file explicitly loaded:
+
 ```powershell
-# Frontend (terminal 2)
-npm install
+.\.venv\Scripts\python.exe -m uvicorn prometheus.api.app:app --host 127.0.0.1 --port 8790 --env-file .env
+```
+
+The `prometheus` module path is Orb's existing internal Python package name. This command runs the backend from this independent Orb repository.
+
+Uvicorn does not load `.env` automatically. Restart the backend after editing it, and remove stale shell overrides if they conflict with the file. Keep `.env` private and ignored by Git.
+
+### Frontend
+
+In the second terminal:
+
+```powershell
+npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5174`. The dev server binds to loopback and proxies
-`/api` to the backend on port 8790. `.env.example` lists the server settings;
-the commands above set them explicitly because Uvicorn does not automatically
-load `.env`. OpenAI is also supported with `ORB_AI_PROVIDER=openai` and
-`OPENAI_API_KEY`. Without a provider key, AI controls remain unavailable.
+Open [local Orb](http://127.0.0.1:5174). Vite binds to loopback port 5174 and proxies `/api` to the backend at port 8790. Use this exact browser origin for wallet testing.
 
-The AI authorization check runs on the server for every operation. Unpaid
-testing requires both local flags and a loopback request. Outside that path,
-Decode, Compose, and Enhance require a signed wallet session and reserved
-testnet credit. With credits disabled, public AI access remains blocked. Do
-not enable local testing flags on a public server.
-
-## Tests
+### Backend Checks
 
 ```powershell
-.venv\Scripts\python -m pytest -q
-npm run test:web
-npm run build
+Invoke-RestMethod http://127.0.0.1:8790/api/health
+Invoke-RestMethod http://127.0.0.1:8790/api/ready
 ```
 
-## Project layout
+`/api/health` reports service and AI configuration. `/api/ready` checks whether the backend can accept analysis, including processing tools and temporary storage. `/api/upload-ping` checks multipart upload handling without running AI.
 
-- `web/` — the ORB frontend (vanilla JS + Vite).
-- `prometheus/` — the inherited analysis engine (internal package name kept
-  for compatibility; see HANDOFF.md).
-- `tests/` — inherited engine tests plus new frontend tests.
+### Local Payment Testing
+
+To exercise the actual paid flow, update the server-side `.env` and restart the backend:
+
+```env
+ORB_ENV=local
+ORB_AI_LOCAL_TESTING=0
+ORB_CREDITS_ENABLED=1
+ORB_PUBLIC_ORIGIN=http://127.0.0.1:5174
+ORB_ARBITRUM_RPC_URL=https://<trusted-arbitrum-sepolia-rpc>
+ORB_CREDIT_RECEIVER=0x<dedicated-testnet-receiving-address>
+```
+
+Keep the AI provider settings from the previous example. The receiving address must be a valid externally owned wallet address, not a private key. Fund the purchasing wallet with Arbitrum Sepolia testnet ETH, connect and sign, then use Wallet & Credits to buy credits.
+
+Optional local settings include `ORB_CREDIT_DB` (default `api_output/orb_credits.sqlite3`), `ORB_CREDIT_PRICE_WEI` (default `1000000000000`), and `ORB_PAYMENT_CONFIRMATIONS` (default `3`). Do not enable the legacy Nimiq payment flag; that integration remains disabled and separate from Orb credits.
+
+---
+
+## Deployment Configuration
+
+Orb uses a separate Vercel frontend, Render Free Docker backend, and Supabase Postgres database. Configure secrets through the backend hosting environment, never through committed `.env` files or client-side `VITE_*` variables.
+
+### Supabase Postgres
+
+Use a server-side Postgres connection string in `ORB_DATABASE_URL`. For a persistent IPv4 backend, use the shared **Session pooler** connection from the project's **Connect** panel, as described in [Supabase's connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres). Use TLS (`sslmode=require` or a supported verification mode), and correctly encode special characters in credentials.
+
+Orb creates its dedicated `orb` schema and version 1 tables transactionally under a database advisory lock. Existing tables are not dropped or recreated on startup. The database user must be able to create the schema and tables. Future schema changes require a versioned migration; local SQLite data is not imported automatically.
+
+All production ledger state, sessions, quotes, purchases, reservations, and completed results live in Postgres. Startup reconciles interrupted reservations: a saved deliverable result is settled; an incomplete operation's reservation is released. Use **one backend instance and one worker** so startup reconciliation cannot race another active worker.
+
+### Render Backend
+
+- **Runtime:** Docker, using the repository's `Dockerfile`
+- **Recurring health-check path:** `/api/health`
+- **Instances/workers:** one
+- **Persistent disk:** not required
+- **Temporary uploads:** `/tmp/orb_uploads`
+
+The Dockerfile installs FFmpeg/FFprobe and starts Orb with:
+
+```sh
+uvicorn prometheus.api.app:app --host 0.0.0.0 --port ${PORT:-10000}
+```
+
+Let Render supply `PORT`. Production uses Render environment variables and does not need a local `.env` file. Keep `/api/ready` for analysis readiness checks, rather than Render's recurring liveness check.
+
+Enter these backend settings privately. All secret and account-specific values below are placeholders:
+
+| Variable | Production setting |
+| --- | --- |
+| `ORB_ENV` | `production` |
+| `ORB_AI_PROVIDER` | `gemini` |
+| `ORB_AI_MODEL` | `gemini-3.5-flash-lite`, or your verified available model |
+| `GEMINI_API_KEY` | `<server-side-api-key>` |
+| `ORB_AI_LOCAL_TESTING` | `0` |
+| `ORB_CREDITS_ENABLED` | `1` |
+| `ORB_PUBLIC_ORIGIN` | `https://<exact-orb-frontend-domain>` |
+| `ORB_ARBITRUM_RPC_URL` | `https://<trusted-arbitrum-sepolia-rpc>` |
+| `ORB_CREDIT_RECEIVER` | `0x<dedicated-testnet-receiving-address>` |
+| `ORB_DATABASE_URL` | `postgresql://<user>:<password>@<host>:<port>/<database>?sslmode=require` |
+| `ORB_UPLOAD_DIR` | `/tmp/orb_uploads` |
+| `ORB_CREDIT_PRICE_WEI` | `1000000000000` (current default) |
+| `ORB_PAYMENT_CONFIRMATIONS` | `3` (current default) |
+
+Production requires Postgres, the Gemini provider and explicit model, a server-side API key, paid credit mode, local testing disabled, and an exact HTTPS frontend origin. It refuses an ephemeral SQLite ledger. Production does not require `ORB_DATA_DIR`, `ORB_CREDIT_DB`, a durable `ORB_OUTPUT_DIR`, or a Supabase service-role key.
+
+Set `ORB_PUBLIC_ORIGIN` to the frontend's exact browser origin, without a trailing slash or path. CORS and signed wallet challenges use this origin. A different preview domain needs its own explicitly configured backend origin. Do not enable legacy payment settings or add wallet private keys.
+
+### Vercel Frontend
+
+- **Project root:** repository root
+- **Framework:** Vite
+- **Build command:** `npm run build:vercel`
+- **Output directory:** `web_dist`
+- **Frontend-safe environment variable:** `VITE_API_BASE_URL=https://<orb-backend-domain>`
+
+`vercel.json` contains the build and output settings. `VITE_API_BASE_URL` must be an HTTPS backend origin without a path, credentials, or localhost. The guarded build rejects invalid values. For the live demo, this public API origin is `https://orb-api-7qwv.onrender.com`.
+
+Do not put Gemini keys, database connection strings, RPC credentials, or wallet secrets into Vercel or `VITE_*` variables. Production requests use the configured backend origin; the loopback Vite proxy is for development only.
+
+### Deployment Validation
+
+After an authorized deployment or configuration update:
+
+1. Check `/api/health`, `/api/ready`, and `/api/orb/credits/config`; confirm paid mode and chain ID `421614`.
+2. Confirm the production frontend origin matches `ORB_PUBLIC_ORIGIN` and wallet signing works from that origin.
+3. Connect MetaMask, switch to Arbitrum Sepolia, sign the challenge, and inspect the balance.
+4. With approval for a testnet transfer, buy one credit and wait for server verification.
+5. Run Decode; confirm a genuine AI result and exactly one consumed credit.
+6. Confirm same-wallet session recovery works. Refresh/restart the backend and check that the balance and completed result remain available.
+
+Automated tests do not establish that a deployed provider call or on-chain payment succeeded. Repeat the real flow when validating a new deployment.
+
+---
+
+## Tests and Build
+
+From the repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+npm run test:web
+```
+
+Check the guarded production build in a separate terminal with a non-secret placeholder HTTPS API origin:
+
+```powershell
+$env:VITE_API_BASE_URL="https://orb-api.example.invalid"
+npm run build:vercel
+```
+
+The placeholder is for build validation only. Use the real public Orb backend origin for deployment.
+
+Repository validation on **2026-09-29**: **179 backend tests passed**, **34 frontend tests passed**, and the guarded production frontend build passed.
+
+The backend suite covers AI validation, upload reliability, wallet authentication, payment verification, credit lifecycle, result recovery, and production guards. The frontend suite covers wallet/session recovery, payment requests, mode state, results, and UI behavior.
+
+Provider and blockchain integration tests use test doubles. Postgres adapter tests use a SQL-recording driver and a SQLite-backed database double; they do not connect to a live Supabase database. Live AI and on-chain checks are separate from these automated tests.
+
+## Project Layout
+
+- `web/` — Orb frontend and frontend tests
+- `prometheus/` — Orb backend and analysis engine under the retained internal Python package name
+- `tests/` — backend tests
+- `scripts/check-vercel-env.mjs` — frontend production API-origin guard
+- `Dockerfile` — Render backend image and startup command
+- `vercel.json` — frontend deployment settings
+- `.env.example` — safe configuration template
+- `HANDOFF.md` — implementation history and validation notes

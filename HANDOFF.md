@@ -817,3 +817,36 @@ a temporary process-only model override described below.
 - Validation: targeted frontend file **21 passed**; full frontend suite
   **34 passed** in 3 files; guarded Vercel production build passed with a
   placeholder HTTPS API origin.
+
+## 2026-09-29 Hackathon submission README refresh
+
+- Reworked README around the user's submission draft for the Arbitrum Open
+  House Singapore Online Buildathon: why Orb exists, Decode, Compose,
+  Enhance, locked Create roadmap, Arbitrum integration, credit safety,
+  architecture, video processing, and security.
+- Preserved the public frontend and backend links and the Arbitrum Sepolia
+  testnet/demo disclaimer. Removed outdated product and predeployment wording;
+  the retained `prometheus` internal package path is explained only where
+  needed for the working startup command and repository layout.
+- Preserved and refreshed PowerShell setup, local unpaid/paid testing,
+  Supabase Postgres, Render Free, Vercel, environment configuration, and
+  deployment validation instructions. Local startup explicitly loads `.env`
+  with Uvicorn, including installation of `python-dotenv`. Render's recurring
+  health check is documented as `/api/health`, with `/api/ready` reserved for
+  upload/analysis readiness checks.
+- Corrected the old in-memory session description: hashed server sessions
+  persist in the ledger, browser tokens use session storage, and same-wallet
+  signing resumes an existing paid job after expiry. Documented durable result
+  recovery, temporary production media, and the single-worker/instance
+  reconciliation constraint.
+- All private configuration examples use placeholders; no populated `.env`,
+  API key, database credential, RPC credential, private key, or seed phrase
+  was read or added. `.env` remains ignored. Only README and HANDOFF were
+  edited; application code and the original Prometheus project were untouched.
+- Validation: full backend suite **179 passed** with 104 existing FastAPI
+  deprecation warnings; full frontend suite **34 passed** in 3 files after
+  retrying an initial worker-start timeout; guarded production build passed
+  with a placeholder HTTPS API origin. These tests use AI/blockchain/database
+  doubles where documented; no live provider call, Supabase verification, or
+  on-chain transaction was performed during this documentation task.
+- No commit, push, or deployment was performed.

@@ -91,6 +91,10 @@
       <button id="wallet-disconnect" class="btn ghost hidden" type="button">Disconnect wallet</button>
     </div>
     <div id="wallet-purchase" class="wallet-purchase hidden">
+      <div id="payment-method-picker" class="hidden">
+        <span id="payment-method-label">Payment method</span>
+        <div id="payment-method-options" class="payment-method-options" role="group" aria-labelledby="payment-method-label"></div>
+      </div>
       <label for="credit-count">Buy testnet credits</label>
       <select id="credit-count"><option value="1">1 credit</option><option value="3">3 credits</option><option value="5">5 credits</option></select>
       <p id="credit-price" class="wallet-line"></p>

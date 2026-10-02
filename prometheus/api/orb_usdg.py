@@ -54,4 +54,4 @@ def usdg_payment_config(config) -> dict:
     return {"payment_method": "usdg", "token_symbol": "USDG",
             "token_contract": to_checksum_address(config.usdg_contract),
             "token_decimals": USDG_DECIMALS, "price_base_units": str(config.usdg_price),
-            "deployment_target": "usdg-staging"}
+            "deployment_target": config.deployment_target}

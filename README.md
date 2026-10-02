@@ -6,10 +6,13 @@ It combines multimodal AI with Arbitrum Sepolia testnet credits to create a veri
 
 Built for the **Arbitrum Open House Singapore Online Buildathon**.
 
-> The `usdg-test` branch contains an isolated Paxos test USDG payment integration.
+> The `usdg-test` branch prepares two payment methods: Arbitrum Sepolia Test ETH
+> and Paxos test USDG. USDG has no monetary value.
 > The live `main` deployment still uses native testnet ETH. See
 > [USDG staging setup](docs/USDG_STAGING.md) for configuration, isolation,
-> fresh database bootstrap, preview deployment, and the manual payment test.
+> fresh database bootstrap, preview deployment, and the manual payment test;
+> [dual-payment promotion](docs/DUAL_PAYMENTS.md) covers the payment selector,
+> explicit populated-database migration, and staged production rollout.
 
 ## Live Demo
 
@@ -401,7 +404,7 @@ npm run build:vercel
 
 The placeholder is for build validation only. Use the real public Orb backend origin for deployment.
 
-Repository validation on **2026-09-29**: **179 backend tests passed**, **34 frontend tests passed**, and the guarded production frontend build passed.
+Repository validation on **2026-10-02** (`usdg-test`): **253 backend tests passed**, **59 frontend tests passed**, and the guarded staging production frontend build passed. These are branch validation results, not a claim that main has been upgraded.
 
 The backend suite covers AI validation, upload reliability, wallet authentication, payment verification, credit lifecycle, result recovery, and production guards. The frontend suite covers wallet/session recovery, payment requests, mode state, results, and UI behavior.
 

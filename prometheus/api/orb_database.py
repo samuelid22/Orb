@@ -163,6 +163,12 @@ class OrbDatabase:
         for table in ("balances", "sessions", "challenges", "quotes", "purchases", "reservations"):
             if connection.execute(f"SELECT 1 FROM {prefix}{table} LIMIT 1").fetchone():
                 raise RuntimeError("USDG requires an isolated fresh staging database, not an existing Orb ledger.")
+        OrbDatabase._create_usdg(connection, postgres)
+
+    @staticmethod
+    def _create_usdg(connection, postgres: bool) -> None:
+        """Shared additive DDL; callers must first validate or require a fresh ledger."""
+        prefix = "orb." if postgres else ""
         # Core schema version stays at 1. Old native-ETH code ignores these
         # extra tables; no existing table is altered or existing row updated.
         integer = "BIGINT" if postgres else "INTEGER"

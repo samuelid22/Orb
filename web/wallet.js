@@ -21,6 +21,8 @@ export function initWallet({ onBalance }) {
   const retryButton = el("wallet-retry");
   const count = el("credit-count");
   let config = null;
+  let paymentMethods = {};
+  let selectedMethod = null;
   let token = null;
   let address = null;
   let walletAccount = null;
@@ -64,6 +66,10 @@ export function initWallet({ onBalance }) {
     headerButton.disabled = busy;
     buyButton.disabled = busy || !verified;
     retryButton.disabled = busy || !verified;
+    el("payment-method-options").querySelectorAll("button").forEach((button) => {
+      button.disabled = busy;
+      button.setAttribute("aria-pressed", String(button.dataset.method === selectedMethod));
+    });
     onBalance(balance);
   }
 
@@ -240,13 +246,51 @@ export function initWallet({ onBalance }) {
   }
 
   function showPrice(quote = null) {
-    if (config?.payment_method === "usdg") {
+    const methodConfig = paymentMethods[selectedMethod];
+    if (selectedMethod === "usdg") {
+      // Informational preview derives from server config; only a returned quote
+      // supplies the actual transaction amount and credits.
       el("credit-price").textContent = quote
         ? `${quote.credits} credits · ${formatUsdg(quote.amount_base_units)} test USDG. Quote expires in 15 minutes.`
-        : "Get a server quote for the exact test USDG price. Arbitrum Sepolia ETH is needed for gas.";
-    } else if (config) {
-      el("credit-price").textContent = `${formatTestnetEth(BigInt(config.price_wei) * BigInt(count.value))} testnet ETH for ${count.value} credit${count.value === "1" ? "" : "s"} (plus gas). Quote expires in 15 minutes.`;
+        : methodConfig?.price_base_units
+          ? `${count.value} credit${count.value === "1" ? "" : "s"} · ${formatUsdg(BigInt(methodConfig.price_base_units) * BigInt(count.value))} test USDG. Final price confirmed by server quote; ETH is needed for gas.`
+          : "Get a server quote for the exact test USDG price. Arbitrum Sepolia ETH is needed for gas.";
+    } else if (methodConfig) {
+      el("credit-price").textContent = `${formatTestnetEth(BigInt(methodConfig.price_wei) * BigInt(count.value))} testnet ETH for ${count.value} credit${count.value === "1" ? "" : "s"} (plus gas). Quote expires in 15 minutes.`;
     }
+  }
+
+  function selectMethod(method) {
+    if (!paymentMethods[method]?.enabled || busy) return;
+    selectedMethod = method;
+    buyButton.textContent = method === "usdg" ? "Buy credits with USDG" : "Pay with testnet ETH";
+    el("wallet-testnet-notice").textContent = method === "usdg"
+      ? "Paxos USDG · Arbitrum Sepolia. Testnet USDG has no monetary value. Arbitrum Sepolia ETH is still needed for gas."
+      : "Arbitrum Sepolia · TESTNET ONLY. Demo credits have no real-money value. Testnet ETH is needed for payment and gas.";
+    showPrice();
+    update();
+  }
+
+  function renderMethods() {
+    // Legacy single-method config is supported; structured config is authoritative.
+    paymentMethods = config.payment_methods || (config.payment_method === "usdg"
+      ? { usdg: { ...config, enabled: true } } : { native_eth: { ...config, enabled: true } });
+    const options = el("payment-method-options");
+    options.replaceChildren();
+    for (const [method, label] of [["native_eth", "Test ETH"], ["usdg", "Paxos USDG"]]) {
+      if (!paymentMethods[method]?.enabled) continue;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.method = method;
+      button.textContent = label;
+      button.addEventListener("click", () => selectMethod(method));
+      options.append(button);
+    }
+    el("payment-method-picker").classList.toggle("hidden", options.children.length < 2);
+    const pending = pendingPayment();
+    selectMethod(paymentMethods[pending?.paymentMethod]?.enabled ? pending.paymentMethod
+      : paymentMethods.native_eth?.enabled ? "native_eth" : "usdg");
+    if (!selectedMethod) throw new Error("No supported payment method is enabled.");
   }
 
   async function verifyPending(attempts = 0) {
@@ -277,13 +321,15 @@ export function initWallet({ onBalance }) {
   }
 
   async function buy() {
-    if (busy || !token) return;
+    if (busy || !token || !paymentMethods[selectedMethod]?.enabled) return;
     if (pendingPayment()) {
       setFeedback("A payment is pending. Check pending transaction before buying again.");
       retryButton.classList.remove("hidden");
       return;
     }
     const payingWallet = address;
+    const payingMethod = selectedMethod;
+    const methodConfig = paymentMethods[payingMethod];
     let epoch = authEpoch;
     busy = true;
     update();
@@ -295,13 +341,14 @@ export function initWallet({ onBalance }) {
       epoch = authEpoch;
       const quote = await json("/api/orb/credits/quotes", { method: "POST",
         headers: { "Content-Type": "application/json", ...headers() },
-        body: JSON.stringify({ credits: Number(count.value) }) });
+        body: JSON.stringify({ credits: Number(count.value), payment_method: payingMethod }) });
       if (quote.chain_id !== CHAIN_ID) throw new Error("Server quote has the wrong chain.");
       if (epoch !== authEpoch || !verified) throw new Error("Wallet changed. Sign again before buying credits.");
       if (quote.expires_at && quote.expires_at <= Date.now() / 1000) throw new Error("Payment quote expired. Request a new quote.");
-      if (config?.payment_method === "usdg") {
+      if ((quote.payment_method || "native_eth") !== payingMethod) throw new Error("Server quote has the wrong payment method.");
+      if (payingMethod === "usdg") {
         if (quote.payment_method !== "usdg" || quote.token_symbol !== "USDG" || quote.token_decimals !== 6
-            || quote.token_contract?.toLowerCase() !== config.token_contract?.toLowerCase()
+            || quote.token_contract?.toLowerCase() !== methodConfig.token_contract?.toLowerCase()
             || quote.to?.toLowerCase() !== quote.token_contract.toLowerCase()
             || quote.wallet?.toLowerCase() !== payingWallet.toLowerCase() || quote.value_wei !== "0"
             || !/^0x[0-9a-fA-F]{40}$/.test(quote.receiver)
@@ -319,7 +366,7 @@ export function initWallet({ onBalance }) {
       if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error("Wallet did not return a valid transaction hash.");
       // Remember a submitted transfer even if the account changes while the
       // wallet approval dialog is open. Only its original wallet can verify it.
-      sessionStorage.setItem(PENDING_KEY, JSON.stringify({ quoteId: quote.quote_id, txHash, wallet: payingWallet }));
+      sessionStorage.setItem(PENDING_KEY, JSON.stringify({ quoteId: quote.quote_id, txHash, wallet: payingWallet, paymentMethod: payingMethod }));
       setFeedback("Payment submitted. Verifying payment…");
       void verifyPending();
     } catch (error) {
@@ -328,11 +375,13 @@ export function initWallet({ onBalance }) {
       if (/(?:max\s*fee\s*per\s*gas|maxFeePerGas).*(?:base\s*fee|baseFee)/i.test(feeError)) {
         setFeedback("MetaMask's gas estimate fell below Arbitrum Sepolia's current base fee. Check your wallet activity before retrying Buy Credits with a fresh Market or Aggressive fee estimate. Orb did not receive a transaction hash.");
       } else if (error?.code === 4001) setFeedback("Payment cancelled in your wallet. No new credits were charged.");
-      else if (config?.payment_method === "usdg" && /insufficient|exceeds balance|transfer amount exceeds/i.test(feeError)
+      else if (payingMethod === "usdg" && /insufficient|exceeds balance|transfer amount exceeds/i.test(feeError)
           && /token|usdg|transfer amount|balanceOf/i.test(feeError)) {
         setFeedback("Insufficient test USDG. Obtain Paxos test USDG on Arbitrum Sepolia and try again.");
       } else if (/insufficient funds|insufficient.*gas|gas.*insufficient/i.test(feeError)) {
-        setFeedback("Insufficient Arbitrum Sepolia ETH for gas. Add testnet ETH and try again.");
+        setFeedback(payingMethod === "usdg"
+          ? "Insufficient Arbitrum Sepolia ETH for gas. Add testnet ETH and try again."
+          : "Insufficient Arbitrum Sepolia ETH for payment and gas. Add testnet ETH and try again.");
       } else setFeedback(error.message || "Testnet payment was cancelled.");
     }
     finally { busy = false; update(); }
@@ -406,14 +455,12 @@ export function initWallet({ onBalance }) {
     try {
       const loadedConfig = await json("/api/orb/credits/config");
       if (import.meta.env.VITE_ORB_DEPLOYMENT_TARGET === "usdg-staging"
-          && (loadedConfig.payment_method !== "usdg" || loadedConfig.deployment_target !== "usdg-staging")) {
+          && (!(loadedConfig.payment_methods?.usdg?.enabled || loadedConfig.payment_method === "usdg")
+              || loadedConfig.deployment_target !== "usdg-staging")) {
         throw new Error("This preview requires the isolated USDG staging backend.");
       }
       config = loadedConfig;
-      if (config.payment_method === "usdg") {
-        buyButton.textContent = "Buy credits with USDG";
-        el("wallet-testnet-notice").textContent = "Paxos USDG · Arbitrum Sepolia. Testnet USDG has no monetary value. Arbitrum Sepolia ETH is still needed for gas.";
-      }
+      renderMethods();
       if (!config.enabled) setFeedback("Testnet payments are not configured on this server.");
       else setFeedback("Connect a wallet to see your testnet credits.");
       count.dispatchEvent(new Event("change"));
@@ -421,7 +468,7 @@ export function initWallet({ onBalance }) {
         await network().catch(() => {});
         await restoreSession();
       }
-    } catch { setFeedback("Could not load testnet payment configuration."); }
+    } catch { config = null; setFeedback("Could not load testnet payment configuration."); }
     update();
   })();
   update();

@@ -250,6 +250,10 @@ button { font: inherit; }
 .wallet-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .wallet-purchase { display: grid; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
 .wallet-purchase label { font-weight: 700; }
+.payment-method-options { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.payment-method-options button { flex: 1; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--navy); background: white; font: inherit; cursor: pointer; }
+.payment-method-options button[aria-pressed="true"] { color: var(--blue); background: var(--light-blue, #eaf4ff); border-color: var(--blue); font-weight: 700; }
+.payment-method-options button:disabled { opacity: .65; cursor: default; }
 .wallet-purchase select { width: 100%; min-height: 42px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: white; color: var(--navy); }
 .wallet-panel button:focus-visible, .wallet-purchase select:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .testnet-note { margin: 16px 0 0; color: var(--muted); font-size: 12px; text-align: center; }

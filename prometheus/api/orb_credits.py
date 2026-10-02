@@ -1,7 +1,7 @@
 """Orb-only Arbitrum Sepolia wallet authentication and credit ledger.
 
-Native testnet ETH remains the default. Isolated USDG staging uses the Paxos
-token's direct ERC-20 transfer to a configured, dedicated EOA. Quotes bind
+Native testnet ETH remains the default. Explicit enabled methods can add the
+Paxos token's direct ERC-20 transfer to the configured EOA. Quotes bind
 the exact amounts and input; the server independently verifies receipts.
 No signing key or payment secret is held by Orb.
 """
@@ -54,6 +54,7 @@ class CreditConfig:
     confirmations: int = 3
     enabled: bool = False
     payment_method: str = "native"
+    payment_methods: tuple[str, ...] = ()
     chain_id: int = CHAIN_ID
     usdg_contract: str = USDG_CONTRACT
     usdg_decimals: int = USDG_DECIMALS
@@ -61,14 +62,18 @@ class CreditConfig:
     deployment_target: str = ""
 
     def __post_init__(self) -> None:
-        if self.payment_method not in {"native", "usdg"} or self.chain_id != CHAIN_ID:
+        if (self.payment_method not in {"native", "native_eth", "usdg"} or self.chain_id != CHAIN_ID
+                or any(method not in {"native_eth", "usdg"} for method in self.payment_methods)
+                or len(set(self.payment_methods)) != len(self.payment_methods)):
             raise ValueError("Orb payments require Arbitrum Sepolia and a supported payment method.")
-        if self.payment_method == "usdg":
-            if (self.deployment_target != "usdg-staging" or self.usdg_contract.lower() != USDG_CONTRACT.lower()
+        if "usdg" in self.methods:
+            if ((not self.payment_methods and self.deployment_target != "usdg-staging")
+                    or self.usdg_contract.lower() != USDG_CONTRACT.lower()
                     or self.usdg_decimals != USDG_DECIMALS or self.usdg_price != USDG_PRICE
                     or self.receiver.lower() == USDG_CONTRACT.lower()
-                    or self.public_origin.rstrip("/") == "https://orb-azure-ten.vercel.app"):
-                raise ValueError("USDG requires the isolated staging target and exact Paxos Sepolia token configuration.")
+                    or (self.deployment_target == "usdg-staging"
+                        and self.public_origin.rstrip("/") == "https://orb-azure-ten.vercel.app")):
+                raise ValueError("USDG requires explicit payment methods or the isolated staging target, and exact Paxos Sepolia token configuration.")
         if self.price_wei <= 0 or not 1 <= self.confirmations <= 100:
             raise ValueError("Invalid Orb testnet credit price or confirmation count.")
         if self.enabled:
@@ -79,6 +84,10 @@ class CreditConfig:
                     or (origin.scheme != "https" and origin.hostname not in {"localhost", "127.0.0.1"})
                     or rpc.scheme != "https" or not rpc.netloc or not is_address(self.receiver)):
                 raise ValueError("Orb credit configuration requires a trusted origin, HTTPS RPC, and receiver address.")
+
+    @property
+    def methods(self) -> tuple[str, ...]:
+        return self.payment_methods or (("usdg",) if self.payment_method == "usdg" else ("native_eth",))
 
     @property
     def ready(self) -> bool:
@@ -106,7 +115,7 @@ class CreditService:
     def __init__(self, config: CreditConfig, rpc: RpcClient | None = None):
         self.config = config
         self.rpc = rpc or RpcClient(config.rpc_url)
-        self.database = OrbDatabase(config.database, config.database_url, usdg_staging=config.payment_method == "usdg")
+        self.database = OrbDatabase(config.database, config.database_url, usdg_staging="usdg" in config.methods)
 
     def _db(self):
         return self.database.session()
@@ -194,15 +203,23 @@ class CreditService:
         return {"wallet": to_checksum_address(wallet), "available": granted - consumed - reserved,
                 "reserved": reserved, "consumed": consumed, "granted": granted}
 
-    def create_quote(self, wallet: str, credits: int) -> dict:
+    def create_quote(self, wallet: str, credits: int, payment_method: str | None = None) -> dict:
         self._require_ready()
+        if payment_method is None:
+            if len(self.config.methods) != 1:
+                raise CreditError("Choose a payment method.")
+            payment_method = self.config.methods[0]
+        if not isinstance(payment_method, str) or payment_method not in {"native_eth", "usdg"}:
+            raise CreditError("Invalid payment method.")
+        if payment_method not in self.config.methods:
+            raise CreditError("This payment method is not enabled.")
         if type(credits) is not int or credits not in {1, 3, 5}:
             raise CreditError("Choose 1, 3, or 5 testnet credits.")
         quote_id = secrets.token_hex(16)
         tx_data = QUOTE_DATA_PREFIX + quote_id
         created = int(time.time())
         expires = created + 900
-        usdg = self.config.payment_method == "usdg"
+        usdg = payment_method == "usdg"
         amount = (self.config.usdg_price if usdg else self.config.price_wei) * credits
         if usdg:
             try:
@@ -230,7 +247,7 @@ class CreditService:
                     "to": to_checksum_address(self.config.usdg_contract), "value_wei": "0", "data": tx_data,
                     "credits": credits, "created_at": created, "created_block": created_block,
                     "expires_at": expires, "status": "pending"}
-        return {"quote_id": quote_id, "chain_id": CHAIN_ID,
+        return {"quote_id": quote_id, "chain_id": CHAIN_ID, "payment_method": "native_eth",
                 "to": to_checksum_address(self.config.receiver), "value_wei": str(amount),
                 "data": tx_data, "credits": credits, "expires_at": expires}
 
@@ -241,16 +258,22 @@ class CreditService:
         tx_hash = tx_hash.lower()
         with self._db() as db:
             quote = db.execute("SELECT * FROM quotes WHERE id=? AND wallet=?", (quote_id, wallet)).fetchone()
-            asset = (db.execute("SELECT * FROM usdg_quotes WHERE quote_id=?", (quote_id,)).fetchone()
-                     if self.config.payment_method == "usdg" else None)
         if quote is None:
             raise CreditError("Payment quote was not found.", 404)
-        if self.config.payment_method == "usdg" and (asset is None
+        # Method is persisted with the quote, never supplied by verification's caller.
+        # Native quotes use the ORB1 binding; token quotes require their metadata row.
+        method = "native_eth" if quote["tx_data"].startswith(QUOTE_DATA_PREFIX) else "usdg"
+        if method not in self.config.methods:
+            raise CreditError("This quote's payment method is not enabled.")
+        with self._db() as db:
+            asset = (db.execute("SELECT * FROM usdg_quotes WHERE quote_id=?", (quote_id,)).fetchone()
+                     if method == "usdg" else None)
+        if method == "usdg" and (asset is None
                 or asset["token_contract"] != self.config.usdg_contract.lower()
                 or asset["receiver"] != self.config.receiver.lower()
                 or asset["chain_id"] != CHAIN_ID or asset["token_decimals"] != USDG_DECIMALS
                 or asset["amount_base_units"] != quote["amount_wei"]):
-            raise CreditError("Payment quote does not match this USDG staging configuration.", 400)
+            raise CreditError("Payment quote does not match this USDG configuration.", 400)
         if quote["tx_hash"]:
             if quote["tx_hash"] == tx_hash:
                 return {"status": "credited", "credits": quote["credits"], "balance": self.balance(wallet)}

@@ -16,7 +16,7 @@ async function flush() {
   for (let index = 0; index < 6; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function setup({ account = firstAddress, balanceStatus = 200, revokeError = null, usdg = false, paymentError = null, quoteChange = null } = {}) {
+function setup({ account = firstAddress, balanceStatus = 200, revokeError = null, usdg = false, dual = false, paymentError = null, quoteChange = null } = {}) {
   let selectedAccount = account;
   let currentBalanceStatus = balanceStatus;
   let sessionValid = true;
@@ -42,6 +42,11 @@ function setup({ account = firstAddress, balanceStatus = 200, revokeError = null
   window.ethereum = provider;
   const fetchMock = vi.fn(async (url, options = {}) => {
     const path = String(url);
+    if (path === "/api/orb/credits/config" && dual) return response({ enabled: true, chain_id: 421614,
+      deployment_target: "usdg-staging", payment_methods: {
+        native_eth: { enabled: true, price_wei: "1000" },
+        usdg: { enabled: true, token_contract: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", token_decimals: 6, price_base_units: "100000" },
+      } });
     if (path === "/api/orb/credits/config") return response(usdg ? { enabled: true, payment_method: "usdg",
       deployment_target: "usdg-staging",
       token_contract: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", token_decimals: 6, chain_id: 421614 }
@@ -53,10 +58,15 @@ function setup({ account = firstAddress, balanceStatus = 200, revokeError = null
         receiver, to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value_wei: "0", credits: 3,
         amount_base_units: "300000", expires_at: Math.floor(Date.now() / 1000) + 900,
         data: `0xa9059cbb${receiver.slice(2).padStart(64, "0")}${(300000n).toString(16).padStart(64, "0")}` };
+      if (!usdg && (!dual || JSON.parse(options.body).payment_method === "native_eth")) {
+        Object.assign(quote, { quote_id: "eth-quote", payment_method: "native_eth", to: receiver,
+          value_wei: String(1000 * JSON.parse(options.body).credits), data: "0x4f524231" + "12".repeat(16) });
+      }
       quoteChange?.(quote);
       return response(quote);
     }
     if (path === "/api/orb/credits/quotes/usdg-quote/verify") return response({ credits: 3, balance: { available: 5 } });
+    if (path === "/api/orb/credits/quotes/eth-quote/verify") return response({ credits: 3, balance: { available: 5 } });
     if (path === "/api/orb/wallet/challenge") return response({ nonce: "nonce", message: "Sign in to Orb" });
     if (path === "/api/orb/wallet/sign-in") {
       sessionValid = true;
@@ -399,5 +409,95 @@ describe("Orb wallet authentication UI", () => {
     expect(wallet.isEnabled()).toBe(false);
     expect(document.getElementById("wallet-connect").disabled).toBe(true);
     expect(provider.request.mock.calls.filter(([arg]) => arg.method === "personal_sign")).toHaveLength(0);
+  });
+
+  it("shows both server-enabled methods, switches compact selection and clears old quote copy", async () => {
+    setup({ dual: true });
+    renderWallet();
+    await flush();
+    const buttons = [...document.querySelectorAll("#payment-method-options button")];
+    expect(buttons.map((button) => button.textContent)).toEqual(["Test ETH", "Paxos USDG"]);
+    expect(buttons[0].getAttribute("aria-pressed")).toBe("true");
+    buttons[1].click();
+    expect(buttons[1].getAttribute("aria-pressed")).toBe("true");
+    expect(buttons[0].getAttribute("aria-pressed")).toBe("false");
+    expect(document.getElementById("wallet-testnet-notice").textContent).toContain("no monetary value");
+    expect(document.getElementById("credit-price").textContent).toContain("server quote");
+    document.getElementById("credit-count").value = "3";
+    document.getElementById("credit-count").dispatchEvent(new Event("change"));
+    expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.30 test USDG");
+    buttons[0].click();
+    expect(document.getElementById("wallet-buy").textContent).toBe("Pay with testnet ETH");
+    expect(document.getElementById("credit-price").textContent).toContain("testnet ETH");
+  });
+
+  it.each(["native_eth", "usdg"])("quotes and pays the explicit selected method (%s)", async (method) => {
+    const { provider, fetchMock } = setup({ dual: true });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.querySelector(`[data-method="${method}"]`).click();
+    document.getElementById("credit-count").value = "3";
+    document.getElementById("wallet-buy").click();
+    await flush();
+    const quoteCall = fetchMock.mock.calls.find(([path]) => path === "/api/orb/credits/quotes");
+    expect(JSON.parse(quoteCall[1].body)).toEqual({ credits: 3, payment_method: method });
+    const request = provider.request.mock.calls.find(([arg]) => arg.method === "eth_sendTransaction")[0];
+    expect(request.params[0]).toEqual(method === "usdg" ? { from: firstAddress,
+      to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
+      data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(300000n).toString(16).padStart(64, "0")}` }
+      : { from: firstAddress, to: `0x${"33".repeat(20)}`, value: "0xbb8", data: "0x4f524231" + "12".repeat(16) });
+    expect(document.getElementById("wallet-balance").textContent).toContain("5 testnet credits");
+    expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();
+  });
+
+  it.each(["native_eth", "usdg"])("rejects quotes for another method before wallet approval (%s)", async (method) => {
+    const { provider } = setup({ dual: true, quoteChange(quote) {
+      quote.payment_method = method === "native_eth" ? "usdg" : "native_eth";
+    } });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.querySelector(`[data-method="${method}"]`).click();
+    document.getElementById("wallet-buy").click();
+    await flush();
+    expect(document.getElementById("wallet-feedback").textContent).toContain("wrong payment method");
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("does not invent a disabled server payment option", async () => {
+    setup({ usdg: true });
+    renderWallet();
+    await flush();
+    expect(document.querySelectorAll("#payment-method-options button")).toHaveLength(1);
+    expect(document.querySelector('[data-method="native_eth"]')).toBeNull();
+  });
+
+  it("accepts dual methods from an explicitly isolated Preview backend", async () => {
+    vi.stubEnv("VITE_ORB_DEPLOYMENT_TARGET", "usdg-staging");
+    setup({ dual: true });
+    expect(renderWallet().isEnabled()).toBe(false);
+    await flush();
+    expect(document.getElementById("wallet-connect").disabled).toBe(false);
+  });
+
+  it.each([
+    ["native_eth", "insufficient funds for gas * price + value", "ETH for payment and gas"],
+    ["usdg", "insufficient funds for gas * price + value", "ETH for gas"],
+    ["usdg", "ERC20: transfer amount exceeds balance", "Insufficient test USDG"],
+  ])("gives funds guidance for the selected method (%s)", async (method, error, message) => {
+    const { provider, fetchMock } = setup({ dual: true, paymentError: new Error(error) });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.querySelector(`[data-method="${method}"]`).click();
+    document.getElementById("wallet-buy").click();
+    await flush();
+    expect(document.getElementById("wallet-feedback").textContent).toContain(message);
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/verify"))).toHaveLength(0);
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(1);
   });
 });

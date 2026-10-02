@@ -4,6 +4,13 @@ All USDG implementation is on `usdg-test`. `main` and the live Orb frontend,
 backend, and database keep their native testnet ETH flow. Do not merge this
 branch or change production environment variables during staging testing.
 
+The branch now also supports simultaneous Test ETH and Paxos USDG. See
+[dual-payment configuration and migration](DUAL_PAYMENTS.md) before promotion.
+Use `ORB_PAYMENT_METHODS=native_eth,usdg` only on the isolated staging backend
+for the next acceptance pass. The original single-method settings below remain
+supported. A populated native ledger requires the explicit additive migration;
+startup still refuses to adopt it automatically.
+
 This is **Paxos test USDG on Arbitrum Sepolia and has no monetary value**.
 The [official Paxos token list](https://docs.paxos.com/guides/stablecoin/usdg/testnet)
 identifies `0xFFC95faa3d63Cde504a05B567C600B78C0b41892` as its Arbitrum Sepolia token.
@@ -18,7 +25,7 @@ Arbitrum Sepolia ETH is still required for gas.
 Signed authentication, wallet sessions, AI jobs, credit reservations, settlement,
 failure release, and paid-job recovery use the existing Orb implementation.
 `ORB_PAYMENT_METHOD` defaults to `native`; `usdg` enables the staging token flow.
-USDG additionally requires `ORB_DEPLOYMENT_TARGET=usdg-staging`, the exact token,
+Legacy `ORB_PAYMENT_METHOD=usdg` additionally requires `ORB_DEPLOYMENT_TARGET=usdg-staging`, the exact token,
 six decimals, chain 421614, and the specified price. Invalid settings fail startup.
 
 The server creates a 15-minute quote with wallet, receiver, token, amount,
@@ -226,9 +233,9 @@ claimed by mocked tests. These remain required staging acceptance checks.
 
 ## Automated validation
 
-Validated on 2026-10-02: **225 backend tests passed**, **49 frontend tests
+Validated on 2026-10-02 (dual-payment branch): **253 backend tests passed**, **59 frontend tests
 passed**, and the guarded staging frontend build passed. The backend emitted
-106 existing FastAPI lifespan deprecation warnings. No tests were removed.
+108 existing FastAPI lifespan deprecation warnings. No tests were removed.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q

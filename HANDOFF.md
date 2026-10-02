@@ -926,3 +926,56 @@ a temporary process-only model override described below.
   cloud creation/deployment. Staging credentials, actual preview origin,
   receiver, faucet funds, live database bootstrap, and one real payment/AI
   acceptance test remain external setup work.
+
+## 2026-10-02 Dual-payment preparation and explicit USDG migration
+
+- Started from clean `usdg-test` at `fc9a9c838347f637bda0b559928f933243b0beab`.
+  Main and origin/main remain `ed54ebe682ca64be6580f33887881b01099ae4f3`.
+  The user reported real single-method USDG staging success: 0.30 USDG,
+  three credits, persistence, AI consumption, and no duplicate grants. This
+  pass prepares dual methods; it does not claim their live staging acceptance.
+- Added `ORB_PAYMENT_METHODS=native_eth,usdg`. The explicit list takes
+  precedence over the legacy single switch; absent variables preserve native
+  ETH. USDG token/chain/decimals/100000 price checks remain. Explicit methods
+  prepare eventual production activation without a staging-only requirement;
+  the legacy USDG switch and designated staging origins keep their safeguards.
+- Config exposes server-enabled structured methods; quotes explicitly select
+  a method when both are enabled. Single-method omitted selection remains
+  compatible. Existing native price/receiver/ORB1 calldata and verification
+  remain; USDG uses exact server-quoted transfer calldata, zero ETH, and receipt
+  Transfer verification. Verification dispatches by persisted quote metadata,
+  not client claims or the backend's default method. Both assets share global
+  purchase-hash/quote uniqueness and atomic credit grants.
+- Added compact Test ETH / Paxos USDG selection, pressed-state accessibility,
+  method-specific notices/funds guidance, and explicit quote requests. UI shows
+  only enabled methods and blocks another payment while one is pending.
+  Wallet/session/job recovery, AI operations, credit lifecycle, and balances
+  are unchanged. No wallet USDG balance query or dependency was added.
+- Added `python -m prometheus.api.orb_usdg_migrate --check` (alias `--dry-run`)
+  and the explicit migration without flags. The command reads privately supplied
+  ORB_DATABASE_URL, never imports the app or loads .env, and checks core v1
+  columns/constraints/version plus extension shape. Missing/extra/partial or
+  unsupported schemas fail closed. Checks are read-only: exit 0 ready, 2
+  migration required, 1 refused. Migration adds only usdg_quotes and extension
+  marker in one advisory-locked transaction, verifies, and safely retries. No
+  balance/session/purchase/job/result row is changed or reconciled. Startup
+  still rejects a populated unmarked ledger; no production migration was run.
+- README, .env.example, USDG staging guide and docs/DUAL_PAYMENTS.md document
+  staging dual acceptance, production backup/migration rehearsal, commands,
+  configuration, and compatible rollout: new backend native-only, new frontend,
+  then enable both methods. Old tabs may require refresh. Existing staging
+  isolation/build guard and disabled Git auto-deploy remain. No merge, hosted
+  environment change, production database/service change, Prometheus edit,
+  orb-demo-video edit, or blockchain transaction was performed.
+- Final validation: complete backend **253 passed** with 108 existing FastAPI
+  deprecation warnings; complete frontend **59 passed** across four files;
+  guarded staging production build passed with a non-routable HTTPS origin.
+  Frontend ran with one threads worker after a fork-worker startup timeout;
+  initial sandbox Node/temp-directory access errors were resolved with normal
+  filesystem access. Targeted final dual/migration tests also passed (28).
+  RPC/AI and Postgres catalogs use doubles; real Postgres migration rehearsal
+  and real dual-method staging payments remain pre-merge acceptance gates.
+- Secret/runtime review found no real credentials or private runtime files in
+  the 16 intended changes. Populated env files remain ignored. Authorized
+  delivery is one commit/push solely to `usdg-test` after validation, then stop;
+  no production database/origin/environment or deployment action is authorized.

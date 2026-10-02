@@ -6,6 +6,11 @@ It combines multimodal AI with Arbitrum Sepolia testnet credits to create a veri
 
 Built for the **Arbitrum Open House Singapore Online Buildathon**.
 
+> The `usdg-test` branch contains an isolated Paxos test USDG payment integration.
+> The live `main` deployment still uses native testnet ETH. See
+> [USDG staging setup](docs/USDG_STAGING.md) for configuration, isolation,
+> fresh database bootstrap, preview deployment, and the manual payment test.
+
 ## Live Demo
 
 - **Frontend:** [Open Orb](https://orb-azure-ten.vercel.app)
@@ -376,6 +381,9 @@ Automated tests do not establish that a deployed provider call or on-chain payme
 ---
 
 ## Tests and Build
+
+For `usdg-test`, use the [staging validation commands](docs/USDG_STAGING.md#automated-validation),
+including `VITE_ORB_DEPLOYMENT_TARGET=usdg-staging` for the guarded build.
 
 From the repository root:
 

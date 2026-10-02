@@ -850,3 +850,79 @@ a temporary process-only model override described below.
   doubles where documented; no live provider call, Supabase verification, or
   on-chain transaction was performed during this documentation task.
 - No commit, push, or deployment was performed.
+
+## 2026-10-02 USDG staging database isolation review
+
+- Started from clean `main` at `ed54ebe682ca64be6580f33887881b01099ae4f3`
+  and created the requested local `usdg-test` branch. Main remains unchanged.
+- Inspected the existing payment service and Postgres schema without reading
+  populated environment files or connecting to any deployed database.
+- Sharing production's current ledger is unsafe: all Postgres connections use
+  the fixed `orb` schema; balances are keyed only by wallet; sessions, quotes,
+  purchases, reservations, and results have no deployment/environment scope.
+  Startup reconciliation visits every reserved job and can release a live
+  production job's reservation if its result has not yet been stored.
+- Per the user's section 10 stop instruction, payment implementation is
+  paused pending agreement on isolated staging storage. Recommended minimum:
+  a separate staging Postgres database with separate credentials and a staging
+  `ORB_DATABASE_URL`; a separate Supabase project is one way to provide it.
+  No production database URL or environment group should be reused. A separate
+  schema in the existing database would require deliberate schema selection
+  and database role permissions; the current code does not support it safely.
+- No application code, schema, payment configuration, production deployment,
+  Prometheus, or orb-demo-video files were changed. Only this HANDOFF entry was
+  added on `usdg-test`. No tests were rerun because application code is unchanged.
+- No infrastructure was created, and no commit, push, migration, deployment,
+  wallet signature, or transaction was performed.
+
+## 2026-10-02 Paxos test USDG implementation on usdg-test
+
+- The user approved an isolated staging Postgres database; implementation
+  resumed on `usdg-test`. The unchanged main baseline is
+  `ed54ebe682ca64be6580f33887881b01099ae4f3`. No existing environment file,
+  production database/service, Prometheus, or orb-demo-video was modified.
+- Native ETH remains the default when USDG variables are absent. USDG mode
+  requires the explicit `usdg-staging` target, Arbitrum Sepolia 421614, official
+  Paxos token `0xFFC95faa3d63Cde504a05B567C600B78C0b41892`, six decimals,
+  and integer pricing of 100000 base units per credit.
+- USDG quotes store wallet, receiver, token, exact amount, creation time/block,
+  deadline, and completion via the existing quote record. Standard ERC-20
+  transfer calldata has no quote ID; a matching transfer is assigned once to
+  its verified quote, protected by global transaction and quote uniqueness.
+  Payments must be mined after quote creation and verified before expiry.
+- Backend verification independently checks network, receipt success,
+  canonical block and confirmations, wallet/target/value/calldata, receiver
+  EOA, token code/decimals, and one exact well-formed nonremoved Transfer log.
+  Credit grant, purchase insertion, and quote completion are atomic. Concurrent
+  same-quote retries return the existing grant without incrementing twice.
+- Added USDG extension version 1: `orb.usdg_quotes` and
+  `orb.usdg_schema_versions`, with a quote foreign key, integer constraints,
+  and transactional/advisory-locked fresh database bootstrap. Core schema
+  version 1 and existing columns stay intact. USDG refuses an unmarked,
+  nonempty Orb ledger. No hosted migration was applied. Local USDG defaults
+  to separate SQLite; public staging requires its own Postgres URL.
+- Wallet sends only from/to/value/data; USDG target is the configured token,
+  native value is zero, and data is a server-quoted ERC-20 transfer. Wallet
+  controls gas/fees and requests user approval. Added concise USDG/gas copy,
+  quote validation, pending-payment protection, and wallet rejection/funds
+  guidance. Wallet/session/AI credit-reservation and job-recovery flows remain.
+- Staging build rejects the current production backend and Production USDG
+  deployments; staging wallet refuses a backend not identifying as USDG
+  staging. Vercel Git auto-deploy for `usdg-test` is disabled in branch config
+  so the authorized push does not publish a preview automatically. Production
+  branch configuration and external settings were not changed.
+- `.env.example`, README, and `docs/USDG_STAGING.md` document safe placeholders,
+  isolated Supabase setup, Render staging, branch-scoped Vercel Preview values,
+  exact origin/CORS, test-asset acquisition, and the manual acceptance flow.
+  No new runtime dependency or payment contract was added.
+- Validation: full backend **225 passed**, with 106 FastAPI deprecation
+  warnings; full frontend **49 passed** across 4 files; guarded staging build
+  passed with a placeholder HTTPS API origin. Tests include default native
+  regressions, USDG faults/expiry/replays/concurrency/rollback, signed purchase
+  followed by paid Enhance, result recovery, and staging isolation. Blockchain
+  and AI use mocks; Postgres uses SQL-recording/SQLite-backed doubles. No live
+  Supabase, Gemini, or USDG transaction verification was performed in this pass.
+- Ready for the user-authorized commit/push to `usdg-test`, then stop before
+  cloud creation/deployment. Staging credentials, actual preview origin,
+  receiver, faucet funds, live database bootstrap, and one real payment/AI
+  acceptance test remain external setup work.

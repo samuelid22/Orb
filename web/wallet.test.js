@@ -16,7 +16,7 @@ async function flush() {
   for (let index = 0; index < 6; index += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function setup({ account = firstAddress, balanceStatus = 200, revokeError = null } = {}) {
+function setup({ account = firstAddress, balanceStatus = 200, revokeError = null, usdg = false, paymentError = null, quoteChange = null } = {}) {
   let selectedAccount = account;
   let currentBalanceStatus = balanceStatus;
   let sessionValid = true;
@@ -28,6 +28,10 @@ function setup({ account = firstAddress, balanceStatus = 200, revokeError = null
       if (method === "eth_requestAccounts") return selectedAccount ? [selectedAccount] : [];
       if (method === "eth_chainId") return "0x66eee";
       if (method === "personal_sign") return `0x${"cd".repeat(65)}`;
+      if (method === "eth_sendTransaction") {
+        if (paymentError) throw paymentError;
+        return `0x${"ab".repeat(32)}`;
+      }
       if (method === "wallet_revokePermissions") {
         if (revokeError) throw revokeError;
         return null;
@@ -38,7 +42,21 @@ function setup({ account = firstAddress, balanceStatus = 200, revokeError = null
   window.ethereum = provider;
   const fetchMock = vi.fn(async (url, options = {}) => {
     const path = String(url);
-    if (path === "/api/orb/credits/config") return response({ enabled: true, price_wei: "1000" });
+    if (path === "/api/orb/credits/config") return response(usdg ? { enabled: true, payment_method: "usdg",
+      deployment_target: "usdg-staging",
+      token_contract: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", token_decimals: 6, chain_id: 421614 }
+      : { enabled: true, price_wei: "1000" });
+    if (path === "/api/orb/credits/quotes") {
+      const receiver = `0x${"33".repeat(20)}`;
+      const quote = { quote_id: "usdg-quote", chain_id: 421614, payment_method: "usdg", wallet: selectedAccount,
+        token_symbol: "USDG", token_contract: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", token_decimals: 6,
+        receiver, to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value_wei: "0", credits: 3,
+        amount_base_units: "300000", expires_at: Math.floor(Date.now() / 1000) + 900,
+        data: `0xa9059cbb${receiver.slice(2).padStart(64, "0")}${(300000n).toString(16).padStart(64, "0")}` };
+      quoteChange?.(quote);
+      return response(quote);
+    }
+    if (path === "/api/orb/credits/quotes/usdg-quote/verify") return response({ credits: 3, balance: { available: 5 } });
     if (path === "/api/orb/wallet/challenge") return response({ nonce: "nonce", message: "Sign in to Orb" });
     if (path === "/api/orb/wallet/sign-in") {
       sessionValid = true;
@@ -88,6 +106,7 @@ describe("Orb wallet authentication UI", () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     delete window.ethereum;
   });
 
@@ -300,5 +319,85 @@ describe("Orb wallet authentication UI", () => {
     expect(provider.request.mock.calls.filter(([request]) => request.method === "personal_sign")).toHaveLength(2);
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/wallet/challenge")).toHaveLength(2);
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/wallet/sign-in")).toHaveLength(2);
+  });
+
+  it("renders the server USDG quote and transfers tokens with zero ETH and wallet-estimated fees", async () => {
+    const { provider, fetchMock } = setup({ usdg: true });
+    const wallet = renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    expect(document.getElementById("wallet-buy").textContent).toBe("Buy credits with USDG");
+    expect(document.getElementById("wallet-testnet-notice").textContent).toContain("no monetary value");
+    expect(document.getElementById("wallet-testnet-notice").textContent).toContain("ETH is still needed for gas");
+    document.getElementById("credit-count").value = "3";
+    document.getElementById("wallet-buy").click();
+    await flush();
+    expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.30 test USDG");
+    const [request] = provider.request.mock.calls.find(([arg]) => arg.method === "eth_sendTransaction");
+    expect(request.params[0]).toEqual({ from: firstAddress,
+      to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
+      data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(300000n).toString(16).padStart(64, "0")}` });
+    expect(wallet.hasCredit()).toBe(true);
+    expect(document.getElementById("wallet-balance").textContent).toContain("5 testnet credits");
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/verify"))).toHaveLength(1);
+    expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();
+  });
+
+  it.each([
+    [Object.assign(new Error("User rejected transaction"), { code: 4001 }), "Payment cancelled"],
+    [new Error("ERC20: transfer amount exceeds balance"), "Insufficient test USDG"],
+    [new Error("insufficient funds for gas * price + value"), "Insufficient Arbitrum Sepolia ETH for gas"],
+  ])("handles rejected or insufficient-funds USDG transfers without verification", async (paymentError, message) => {
+    const { fetchMock } = setup({ usdg: true, paymentError });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.getElementById("wallet-buy").click();
+    await flush();
+    expect(document.getElementById("wallet-feedback").textContent).toContain(message);
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/verify"))).toHaveLength(0);
+    expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();
+  });
+
+  it.each(["chain", "amount", "data", "expired", "token"])("rejects a bad USDG quote before sending (%s)", async (fault) => {
+    const { provider } = setup({ usdg: true, quoteChange(quote) {
+      if (fault === "chain") quote.chain_id = 1;
+      if (fault === "amount") quote.amount_base_units = "0.3";
+      if (fault === "data") quote.data = "0xa9059cbb00";
+      if (fault === "expired") quote.expires_at = 1;
+      if (fault === "token") quote.to = secondAddress;
+    } });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.getElementById("wallet-buy").click();
+    await flush();
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("does not submit another USDG payment while one is pending", async () => {
+    const { provider } = setup({ usdg: true });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    sessionStorage.setItem("orb-sepolia-pending-payment", JSON.stringify({ quoteId: "pending", wallet: firstAddress }));
+    document.getElementById("wallet-buy").click();
+    await flush();
+    expect(document.getElementById("wallet-feedback").textContent).toContain("A payment is pending");
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("blocks wallet actions if the USDG Preview points to a native backend", async () => {
+    vi.stubEnv("VITE_ORB_DEPLOYMENT_TARGET", "usdg-staging");
+    const { provider } = setup();
+    const wallet = renderWallet();
+    await flush();
+    expect(wallet.isEnabled()).toBe(false);
+    expect(document.getElementById("wallet-connect").disabled).toBe(true);
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "personal_sign")).toHaveLength(0);
   });
 });

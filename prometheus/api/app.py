@@ -171,7 +171,9 @@ def create_app(
     upload_root = _storage_path(upload_dir or os.environ.get("ORB_UPLOAD_DIR")
                                 or (upload_default if public_mode else os.environ.get("PROMETHEUS_API_UPLOAD_DIR", upload_default)))
     database_url = os.environ.get("ORB_DATABASE_URL", "")
-    credit_db = _storage_path(os.environ.get("ORB_CREDIT_DB", str(output_root / "orb_credits.sqlite3")))
+    payment_method = os.environ.get("ORB_PAYMENT_METHOD", "native")
+    credit_db = _storage_path(os.environ.get("ORB_CREDIT_DB", str(output_root / (
+        "orb_usdg_credits.sqlite3" if payment_method == "usdg" else "orb_credits.sqlite3"))))
     validate_public_deployment(upload_root, database_url)
     output_root.mkdir(parents=True, exist_ok=True)
     upload_root.mkdir(parents=True, exist_ok=True)
@@ -184,6 +186,12 @@ def create_app(
         price_wei=int(os.environ.get("ORB_CREDIT_PRICE_WEI", "1000000000000")),
         confirmations=int(os.environ.get("ORB_PAYMENT_CONFIRMATIONS", "3")),
         enabled=os.environ.get("ORB_CREDITS_ENABLED") == "1",
+        payment_method=payment_method,
+        chain_id=int(os.environ.get("ORB_CHAIN_ID", "421614")),
+        usdg_contract=os.environ.get("ORB_USDG_CONTRACT_ADDRESS", "0xFFC95faa3d63Cde504a05B567C600B78C0b41892"),
+        usdg_decimals=int(os.environ.get("ORB_USDG_DECIMALS", "6")),
+        usdg_price=int(os.environ.get("ORB_CREDIT_PRICE_USDG_BASE_UNITS", "100000")),
+        deployment_target=os.environ.get("ORB_DEPLOYMENT_TARGET", ""),
     ))
     if public_mode and (not credit_service.database.postgres
                         or credit_service.config.database_url != database_url):
@@ -495,11 +503,16 @@ def create_app(
 
     @app.get("/api/orb/credits/config")
     def orb_credit_config() -> dict:
-        return {"enabled": credit_service.config.ready and provider != "mock" and _provider_is_ready(provider),
+        result = {"enabled": credit_service.config.ready and provider != "mock" and _provider_is_ready(provider),
                 "chain_id": CHAIN_ID,
                 "network": "Arbitrum Sepolia", "testnet_only": True,
                 "price_wei": str(credit_service.config.price_wei),
                 "credit_options": [1, 3, 5], "confirmations": credit_service.config.confirmations}
+        if credit_service.config.payment_method == "usdg":
+            from prometheus.api.orb_usdg import usdg_payment_config
+            result.update(usdg_payment_config(credit_service.config))
+            result.pop("price_wei")
+        return result
 
     @app.post("/api/orb/wallet/challenge")
     def orb_wallet_challenge(request: Request, payload: dict) -> dict:

@@ -1,7 +1,8 @@
 """Orb-only Arbitrum Sepolia wallet authentication and credit ledger.
 
-Native testnet ETH is transferred to a configured, dedicated EOA. Each quote
-binds the exact value and transaction input; the server verifies both from RPC.
+Native testnet ETH remains the default. Isolated USDG staging uses the Paxos
+token's direct ERC-20 transfer to a configured, dedicated EOA. Quotes bind
+the exact amounts and input; the server independently verifies receipts.
 No signing key or payment secret is held by Orb.
 """
 
@@ -26,6 +27,7 @@ from eth_keys.exceptions import BadSignature
 from eth_utils import is_address, to_checksum_address
 
 from prometheus.api.orb_database import OrbDatabase
+from prometheus.api.orb_usdg import USDG_CONTRACT, USDG_DECIMALS, USDG_PRICE, matching_transfer, transfer_data
 
 
 CHAIN_ID = 421614
@@ -51,8 +53,22 @@ class CreditConfig:
     price_wei: int = 1_000_000_000_000  # 0.000001 testnet ETH per credit
     confirmations: int = 3
     enabled: bool = False
+    payment_method: str = "native"
+    chain_id: int = CHAIN_ID
+    usdg_contract: str = USDG_CONTRACT
+    usdg_decimals: int = USDG_DECIMALS
+    usdg_price: int = USDG_PRICE
+    deployment_target: str = ""
 
     def __post_init__(self) -> None:
+        if self.payment_method not in {"native", "usdg"} or self.chain_id != CHAIN_ID:
+            raise ValueError("Orb payments require Arbitrum Sepolia and a supported payment method.")
+        if self.payment_method == "usdg":
+            if (self.deployment_target != "usdg-staging" or self.usdg_contract.lower() != USDG_CONTRACT.lower()
+                    or self.usdg_decimals != USDG_DECIMALS or self.usdg_price != USDG_PRICE
+                    or self.receiver.lower() == USDG_CONTRACT.lower()
+                    or self.public_origin.rstrip("/") == "https://orb-azure-ten.vercel.app"):
+                raise ValueError("USDG requires the isolated staging target and exact Paxos Sepolia token configuration.")
         if self.price_wei <= 0 or not 1 <= self.confirmations <= 100:
             raise ValueError("Invalid Orb testnet credit price or confirmation count.")
         if self.enabled:
@@ -90,7 +106,7 @@ class CreditService:
     def __init__(self, config: CreditConfig, rpc: RpcClient | None = None):
         self.config = config
         self.rpc = rpc or RpcClient(config.rpc_url)
-        self.database = OrbDatabase(config.database, config.database_url)
+        self.database = OrbDatabase(config.database, config.database_url, usdg_staging=config.payment_method == "usdg")
 
     def _db(self):
         return self.database.session()
@@ -180,15 +196,40 @@ class CreditService:
 
     def create_quote(self, wallet: str, credits: int) -> dict:
         self._require_ready()
-        if credits not in {1, 3, 5}:
+        if type(credits) is not int or credits not in {1, 3, 5}:
             raise CreditError("Choose 1, 3, or 5 testnet credits.")
         quote_id = secrets.token_hex(16)
         tx_data = QUOTE_DATA_PREFIX + quote_id
-        expires = int(time.time()) + 900
-        amount = self.config.price_wei * credits
+        created = int(time.time())
+        expires = created + 900
+        usdg = self.config.payment_method == "usdg"
+        amount = (self.config.usdg_price if usdg else self.config.price_wei) * credits
+        if usdg:
+            try:
+                if int(self.rpc.call("eth_chainId", []), 16) != CHAIN_ID:
+                    raise CreditError("RPC is connected to the wrong network.", 503)
+                created_block = int(self.rpc.call("eth_blockNumber", []), 16)
+                if created_block < 0:
+                    raise ValueError("Invalid block height")
+            except (ValueError, TypeError) as exc:
+                raise CreditError("RPC returned incomplete quote details.", 503) from exc
+            tx_data = transfer_data(self.config.receiver, amount)
         with self._db() as db:
+            db.begin_write()
             db.execute("INSERT INTO quotes VALUES (?, ?, ?, ?, ?, ?, NULL)",
                        (quote_id, wallet, credits, amount, tx_data, expires))
+            if usdg:
+                db.execute("INSERT INTO usdg_quotes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                           (quote_id, CHAIN_ID, self.config.usdg_contract.lower(), USDG_DECIMALS,
+                            self.config.receiver.lower(), amount, created, created_block))
+        if usdg:
+            return {"quote_id": quote_id, "wallet": to_checksum_address(wallet), "chain_id": CHAIN_ID,
+                    "payment_method": "usdg", "token_symbol": "USDG", "token_decimals": USDG_DECIMALS,
+                    "token_contract": to_checksum_address(self.config.usdg_contract),
+                    "receiver": to_checksum_address(self.config.receiver), "amount_base_units": str(amount),
+                    "to": to_checksum_address(self.config.usdg_contract), "value_wei": "0", "data": tx_data,
+                    "credits": credits, "created_at": created, "created_block": created_block,
+                    "expires_at": expires, "status": "pending"}
         return {"quote_id": quote_id, "chain_id": CHAIN_ID,
                 "to": to_checksum_address(self.config.receiver), "value_wei": str(amount),
                 "data": tx_data, "credits": credits, "expires_at": expires}
@@ -200,12 +241,22 @@ class CreditService:
         tx_hash = tx_hash.lower()
         with self._db() as db:
             quote = db.execute("SELECT * FROM quotes WHERE id=? AND wallet=?", (quote_id, wallet)).fetchone()
+            asset = (db.execute("SELECT * FROM usdg_quotes WHERE quote_id=?", (quote_id,)).fetchone()
+                     if self.config.payment_method == "usdg" else None)
         if quote is None:
             raise CreditError("Payment quote was not found.", 404)
+        if self.config.payment_method == "usdg" and (asset is None
+                or asset["token_contract"] != self.config.usdg_contract.lower()
+                or asset["receiver"] != self.config.receiver.lower()
+                or asset["chain_id"] != CHAIN_ID or asset["token_decimals"] != USDG_DECIMALS
+                or asset["amount_base_units"] != quote["amount_wei"]):
+            raise CreditError("Payment quote does not match this USDG staging configuration.", 400)
         if quote["tx_hash"]:
             if quote["tx_hash"] == tx_hash:
                 return {"status": "credited", "credits": quote["credits"], "balance": self.balance(wallet)}
             raise CreditError("This quote was already paid with another transaction.", 409)
+        if asset is not None and time.time() >= quote["expires"]:
+            raise CreditError("USDG quote expired. Do not send another payment; contact support if already paid.", 410)
         try:
             if int(self.rpc.call("eth_chainId", []), 16) != CHAIN_ID:
                 raise CreditError("RPC is connected to the wrong network.", 503)
@@ -224,22 +275,33 @@ class CreditService:
                 raise CreditError("Transaction block is not canonical.", 409)
             if int(block["timestamp"], 16) > quote["expires"]:
                 raise CreditError("Payment arrived after this quote expired. Contact support.", 409)
+            # A block boundary prevents reuse of an old transfer without relying
+            # on precise server/sequencer clock agreement at quote creation.
+            if asset is not None and block_num <= asset["created_block"]:
+                raise CreditError("USDG payment predates this quote.", 400)
             code = self.rpc.call("eth_getCode", [self.config.receiver, hex(block_num)])
             if code != "0x":
                 raise CreditError("Configured receiver must be a wallet, not a contract.", 503)
+            target = self.config.usdg_contract if asset is not None else self.config.receiver
             valid = (int(receipt["status"], 16) == 1
                      and receipt.get("transactionHash", "").lower() == tx_hash
                      and tx.get("hash", "").lower() == tx_hash
                      and tx.get("blockHash") == receipt.get("blockHash")
                      and tx.get("from", "").lower() == wallet
                      and receipt.get("from", "").lower() == wallet
-                     and tx.get("to", "").lower() == self.config.receiver.lower()
-                     and receipt.get("to", "").lower() == self.config.receiver.lower()
+                     and tx.get("to", "").lower() == target.lower()
+                     and receipt.get("to", "").lower() == target.lower()
                      and wallet != self.config.receiver.lower()
-                     and int(tx["value"], 16) == quote["amount_wei"]
+                     and int(tx["value"], 16) == (0 if asset is not None else quote["amount_wei"])
                      and tx.get("input", "").lower() == quote["tx_data"].lower()
                      and (tx.get("chainId") is None or int(tx["chainId"], 16) == CHAIN_ID))
-        except (KeyError, ValueError, TypeError) as exc:
+            if asset is not None:
+                token_code = self.rpc.call("eth_getCode", [target, hex(block_num)])
+                decimals = self.rpc.call("eth_call", [{"to": target, "data": "0x313ce567"}, hex(block_num)])
+                valid = (valid and int(tx["chainId"], 16) == CHAIN_ID and token_code not in {None, "0x", "0x0"}
+                         and int(decimals, 16) == USDG_DECIMALS
+                         and matching_transfer(receipt, wallet, asset["receiver"], asset["amount_base_units"]))
+        except (KeyError, ValueError, TypeError, AttributeError) as exc:
             raise CreditError("RPC returned incomplete transaction details.", 503) from exc
         if not valid:
             raise CreditError("Transaction does not match this Arbitrum Sepolia quote.", 400)
@@ -247,8 +309,14 @@ class CreditService:
             db.begin_write()
             current = db.execute("SELECT * FROM quotes WHERE id=? AND wallet=?" + self._lock(),
                                  (quote_id, wallet)).fetchone()
+            if current is not None and current["tx_hash"] == tx_hash:
+                # A concurrent verifier already finished this exact purchase.
+                db.commit()
+                return {"status": "credited", "credits": quote["credits"], "balance": self.balance(wallet)}
             if current is None or current["tx_hash"]:
                 raise CreditError("Quote was already credited.", 409)
+            if asset is not None and time.time() >= current["expires"]:
+                raise CreditError("USDG quote expired before verification completed.", 410)
             inserted = db.execute("INSERT INTO purchases VALUES (?, ?, ?, ?, ?, ?) "
                                   "ON CONFLICT DO NOTHING RETURNING tx_hash",
                                   (tx_hash, quote_id, wallet, quote["credits"], block_num,

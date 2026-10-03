@@ -1036,3 +1036,28 @@ a temporary process-only model override described below.
   core-record comparison, compatible native-first rollout, then real payments.
   Finish active AI work before backend restart; the migration itself does not
   reconcile jobs. See docs/DUAL_PAYMENTS.md for the exact rollout.
+
+## 2026-10-03 Migration CLI suppressed-exception diagnosis
+
+- Inspected clean application sources on `usdg-test` at
+  `ba321cbb2a6fe2cc3bb8b9aa60d346f39a904f8f`. The user's untracked
+  `backups/` directory was neither opened nor modified.
+- Plain `python` in this session resolves to the global Python 3.13 executable,
+  which has no `psycopg` or `psycopg_binary`. Orb's `.venv` has both installed.
+  The production database environment variable remains unavailable to this
+  Codex process; no production connection or schema inspection was attempted.
+- Reproduced the suppressed exception using only a synthetic connection URL.
+  `_connect_postgres()` fails at `import psycopg` with
+  `ModuleNotFoundError: No module named 'psycopg'`, wraps it as
+  `RuntimeError: Orb could not connect to its production Postgres database.`,
+  and the migration CLI's broad exception handler emits the reported generic
+  message and exit 1. No SQL is executed in this failure path.
+- Minimal correction: in the same private PowerShell environment where psql
+  succeeds, use `.\.venv\Scripts\python.exe -m prometheus.api.orb_usdg_migrate
+  --check`. This selects Orb's installed dependencies. It does not establish
+  what the production schema check will return once the correct interpreter
+  is used; another live error would require diagnosis in that private session.
+- No application behavior was changed and no temporary diagnostic mode was
+  needed. No credentials were printed, production records modified, write
+  migration applied, merge/deployment/configuration change made, or commit
+  created. Only this handoff records the local diagnostic evidence.

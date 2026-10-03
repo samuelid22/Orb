@@ -115,14 +115,16 @@ Users can:
 
 - **Network:** Arbitrum Sepolia
 - **Chain ID:** `421614`
-- **Payment asset:** native testnet ETH
+- **Payment assets:** native testnet ETH and optionally Paxos test USDG
 - **Credit type:** demo/test credits only
 
 The Buy Credits panel offers 1, 3, or 5 credits. The default price is `1000000000000` wei (0.000001 testnet ETH) per credit, plus wallet-estimated gas. The server quote supplies the configured price and receiving address; the user approves every transfer in their wallet.
 
-Orb independently verifies payment receipts before granting credits. It checks the chain, successful receipt, canonical block and required confirmations, authenticated sender, dedicated receiving wallet, exact payment value, and quote identifier in transaction data.
+When explicitly enabled with `ORB_PAYMENT_METHODS=native_eth,usdg`, Paxos test USDG uses the official Arbitrum Sepolia token and six decimals. Its configurable positive-integer price defaults to `ORB_CREDIT_PRICE_USDG_BASE_UNITS=3000`: 1/3/5 credits cost 0.003/0.009/0.015 test USDG. An explicit `100000` remains valid. Test USDG has no monetary value; Sepolia ETH is still needed for gas. Existing quotes retain their original amount if the configured price changes.
 
-Payments use a direct native ETH transfer to a dedicated testnet receiving wallet. Orb does not need a payment contract or a wallet private key. Authentication currently supports externally owned wallets using `personal_sign`; contract-wallet authentication is not implemented.
+Orb independently verifies payment receipts before granting credits. It checks the chain, successful receipt, canonical block and required confirmations, authenticated sender, dedicated receiving wallet, exact payment value, and the native ETH quote identifier or USDG Transfer event as appropriate.
+
+Payments use a direct native ETH transfer or an ERC-20 USDG transfer to the configured testnet receiving wallet. USDG credit grants require independent receipt and Transfer-event verification. Orb does not need a payment contract or a wallet private key. Authentication currently supports externally owned wallets using `personal_sign`; contract-wallet authentication is not implemented.
 
 ---
 
@@ -404,11 +406,11 @@ npm run build:vercel
 
 The placeholder is for build validation only. Use the real public Orb backend origin for deployment.
 
-Repository validation on **2026-10-02** (`usdg-test`): **253 backend tests passed**, **59 frontend tests passed**, and the guarded staging production frontend build passed. These are branch validation results, not a claim that main has been upgraded.
+Repository validation on **2026-10-04** (`main`): **274 backend tests passed**, **8 opt-in real-Postgres tests skipped**, **62 frontend tests passed**, and the guarded production frontend build passed. No deployment was performed during this validation.
 
 The backend suite covers AI validation, upload reliability, wallet authentication, payment verification, credit lifecycle, result recovery, and production guards. The frontend suite covers wallet/session recovery, payment requests, mode state, results, and UI behavior.
 
-Provider and blockchain integration tests use test doubles. Postgres adapter tests use a SQL-recording driver and a SQLite-backed database double; they do not connect to a live Supabase database. Live AI and on-chain checks are separate from these automated tests.
+Provider and blockchain integration tests use test doubles. Postgres adapter tests use a SQL-recording driver and a SQLite-backed database double; they do not connect to a live Supabase database. The opt-in real-Postgres migration tests require the disposable rehearsal database and were not run in this pass. Live AI and on-chain checks are separate from these automated tests.
 
 ## Project Layout
 

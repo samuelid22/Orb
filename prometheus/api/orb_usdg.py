@@ -6,10 +6,16 @@ from eth_utils import is_address, keccak, to_checksum_address
 
 USDG_CONTRACT = "0xFFC95faa3d63Cde504a05B567C600B78C0b41892"
 USDG_DECIMALS = 6
-USDG_PRICE = 100_000
+USDG_PRICE = 3_000  # Default base units per credit; not part of token identity.
 TRANSFER_TOPIC = "0x" + keccak(text="Transfer(address,address,uint256)").hex()
 TRANSFER_SELECTOR = "a9059cbb"
 WORD = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+
+def parse_usdg_price(value: str) -> int:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]+", value) or int(value) <= 0:
+        raise ValueError("USDG credit price must be a positive integer in base units.")
+    return int(value)
 
 
 def transfer_data(receiver: str, amount: int) -> str:

@@ -45,7 +45,7 @@ function setup({ account = firstAddress, balanceStatus = 200, revokeError = null
     if (path === "/api/orb/credits/config" && dual) return response({ enabled: true, chain_id: 421614,
       deployment_target: "usdg-staging", payment_methods: {
         native_eth: { enabled: true, price_wei: "1000" },
-        usdg: { enabled: true, token_contract: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", token_decimals: 6, price_base_units: "100000" },
+        usdg: { enabled: true, token_contract: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", token_decimals: 6, price_base_units: "3000" },
       } });
     if (path === "/api/orb/credits/config") return response(usdg ? { enabled: true, payment_method: "usdg",
       deployment_target: "usdg-staging",
@@ -55,9 +55,9 @@ function setup({ account = firstAddress, balanceStatus = 200, revokeError = null
       const receiver = `0x${"33".repeat(20)}`;
       const quote = { quote_id: "usdg-quote", chain_id: 421614, payment_method: "usdg", wallet: selectedAccount,
         token_symbol: "USDG", token_contract: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", token_decimals: 6,
-        receiver, to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value_wei: "0", credits: 3,
-        amount_base_units: "300000", expires_at: Math.floor(Date.now() / 1000) + 900,
-        data: `0xa9059cbb${receiver.slice(2).padStart(64, "0")}${(300000n).toString(16).padStart(64, "0")}` };
+        receiver, to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value_wei: "0", credits: JSON.parse(options.body).credits,
+        amount_base_units: String(3000 * JSON.parse(options.body).credits), expires_at: Math.floor(Date.now() / 1000) + 900,
+        data: `0xa9059cbb${receiver.slice(2).padStart(64, "0")}${(BigInt(3000 * JSON.parse(options.body).credits)).toString(16).padStart(64, "0")}` };
       if (!usdg && (!dual || JSON.parse(options.body).payment_method === "native_eth")) {
         Object.assign(quote, { quote_id: "eth-quote", payment_method: "native_eth", to: receiver,
           value_wei: String(1000 * JSON.parse(options.body).credits), data: "0x4f524231" + "12".repeat(16) });
@@ -331,6 +331,17 @@ describe("Orb wallet authentication UI", () => {
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/wallet/sign-in")).toHaveLength(2);
   });
 
+  it.each([[1, "0.003"], [3, "0.009"], [5, "0.015"]])("renders the server-configured USDG bundle price (%s credits)", async (credits, amount) => {
+    setup({ dual: true });
+    renderWallet();
+    await flush();
+    document.querySelector('[data-method="usdg"]').click();
+    const count = document.getElementById("credit-count");
+    count.value = String(credits);
+    count.dispatchEvent(new Event("change"));
+    expect(document.getElementById("credit-price").textContent).toContain(`${credits} credit${credits === 1 ? "" : "s"} · ${amount} test USDG`);
+  });
+
   it("renders the server USDG quote and transfers tokens with zero ETH and wallet-estimated fees", async () => {
     const { provider, fetchMock } = setup({ usdg: true });
     const wallet = renderWallet();
@@ -343,11 +354,11 @@ describe("Orb wallet authentication UI", () => {
     document.getElementById("credit-count").value = "3";
     document.getElementById("wallet-buy").click();
     await flush();
-    expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.30 test USDG");
+    expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.009 test USDG");
     const [request] = provider.request.mock.calls.find(([arg]) => arg.method === "eth_sendTransaction");
     expect(request.params[0]).toEqual({ from: firstAddress,
       to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
-      data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(300000n).toString(16).padStart(64, "0")}` });
+      data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(9000n).toString(16).padStart(64, "0")}` });
     expect(wallet.hasCredit()).toBe(true);
     expect(document.getElementById("wallet-balance").textContent).toContain("5 testnet credits");
     expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/verify"))).toHaveLength(1);
@@ -425,7 +436,7 @@ describe("Orb wallet authentication UI", () => {
     expect(document.getElementById("credit-price").textContent).toContain("server quote");
     document.getElementById("credit-count").value = "3";
     document.getElementById("credit-count").dispatchEvent(new Event("change"));
-    expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.30 test USDG");
+    expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.009 test USDG");
     buttons[0].click();
     expect(document.getElementById("wallet-buy").textContent).toBe("Pay with testnet ETH");
     expect(document.getElementById("credit-price").textContent).toContain("testnet ETH");
@@ -446,7 +457,7 @@ describe("Orb wallet authentication UI", () => {
     const request = provider.request.mock.calls.find(([arg]) => arg.method === "eth_sendTransaction")[0];
     expect(request.params[0]).toEqual(method === "usdg" ? { from: firstAddress,
       to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
-      data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(300000n).toString(16).padStart(64, "0")}` }
+      data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(9000n).toString(16).padStart(64, "0")}` }
       : { from: firstAddress, to: `0x${"33".repeat(20)}`, value: "0xbb8", data: "0x4f524231" + "12".repeat(16) });
     expect(document.getElementById("wallet-balance").textContent).toContain("5 testnet credits");
     expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();

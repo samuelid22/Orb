@@ -1061,3 +1061,33 @@ a temporary process-only model override described below.
   needed. No credentials were printed, production records modified, write
   migration applied, merge/deployment/configuration change made, or commit
   created. Only this handoff records the local diagnostic evidence.
+
+## 2026-10-04 Configurable USDG credit price
+
+- Working on `main`, separated USDG pricing from the fixed token safety guard.
+  `CreditConfig.__post_init__` previously rejected `self.usdg_price != USDG_PRICE`,
+  where `USDG_PRICE` was 100000. That made a legitimate 3000-unit price fail
+  startup with the generic Paxos configuration error.
+- Default/intended USDG price is now 3000 base units per credit: 1/3/5 credits
+  cost 0.003/0.009/0.015 test USDG. Environment parsing accepts positive decimal
+  integers only; zero, negative, malformed, decimal and scientific values fail
+  startup. Explicit 100000 remains valid. Typed configuration also rejects
+  non-integers, including booleans. No floating-point payment arithmetic added.
+- Chain 421614, official Paxos contract, six decimals, explicit payment-method
+  enablement and isolated legacy staging checks remain enforced. Native ETH
+  pricing, receiver configuration, receipt verification, authentication, credit
+  lifecycle, persistence, migrations and job recovery are unchanged. Existing
+  USDG quotes retain their stored amount across price changes.
+- Updated configuration examples, README and payment/staging guides. The
+  existing frontend formatter already supports the smaller values; only its
+  tests changed, with explicit 1/3/5-credit price coverage.
+- Full backend: 274 passed, 8 opt-in real-Postgres tests skipped, 114 existing
+  FastAPI deprecation warnings. Full frontend: 62 passed. Guarded main production
+  build passed using https://orb-api.example.invalid. Provider and blockchain
+  calls were mocked; no live AI, chain transaction or production database access
+  occurred during this pass.
+- User confirmed both production Git auto-deployments are disabled and
+  authorized commit/push to main after validation. No production environment,
+  database or service configuration was changed; no deployment was performed.
+  Changes are confined to independent Orb. Populated .env files, secrets,
+  backups, uploads, results and runtime databases remain excluded from Git.

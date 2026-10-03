@@ -1,8 +1,8 @@
 # Isolated Paxos test USDG staging
 
-All USDG implementation is on `usdg-test`. `main` and the live Orb frontend,
-backend, and database keep their native testnet ETH flow. Do not merge this
-branch or change production environment variables during staging testing.
+Use an isolated staging frontend, backend, and database for this guide.
+The shared code supports native testnet ETH and Paxos test USDG on main.
+Staging testing must not change production environment variables or storage.
 
 The branch now also supports simultaneous Test ETH and Paxos USDG. See
 [dual-payment configuration and migration](DUAL_PAYMENTS.md) before promotion.
@@ -16,8 +16,10 @@ The [official Paxos token list](https://docs.paxos.com/guides/stablecoin/usdg/te
 identifies `0xFFC95faa3d63Cde504a05B567C600B78C0b41892` as its Arbitrum Sepolia token.
 Chain ID is `421614` (`0x66eee`), decimals are `6`.
 
-Pricing uses integers only: 1 credit = `100000` base units = 0.10 test USDG;
-3 credits = `300000` = 0.30 test USDG; 5 credits = `500000` = 0.50 test USDG.
+Default pricing uses integers only: 1 credit = `3000` base units = 0.003 test USDG;
+3 credits = `9000` = 0.009 test USDG; 5 credits = `15000` = 0.015 test USDG.
+A different positive integer price can be explicitly configured, including
+the earlier 100000 base units. Token/chain/decimals validation remains fixed.
 Arbitrum Sepolia ETH is still required for gas.
 
 ## Payment flow and safety
@@ -26,7 +28,7 @@ Signed authentication, wallet sessions, AI jobs, credit reservations, settlement
 failure release, and paid-job recovery use the existing Orb implementation.
 `ORB_PAYMENT_METHOD` defaults to `native`; `usdg` enables the staging token flow.
 Legacy `ORB_PAYMENT_METHOD=usdg` additionally requires `ORB_DEPLOYMENT_TARGET=usdg-staging`, the exact token,
-six decimals, chain 421614, and the specified price. Invalid settings fail startup.
+six decimals, chain 421614, and a positive integer credit price. Invalid settings fail startup.
 
 The server creates a 15-minute quote with wallet, receiver, token, amount,
 credits, timestamps, status, and the chain's current block height. It returns
@@ -107,7 +109,7 @@ ORB_DEPLOYMENT_TARGET=usdg-staging
 ORB_CHAIN_ID=421614
 ORB_USDG_CONTRACT_ADDRESS=0xFFC95faa3d63Cde504a05B567C600B78C0b41892
 ORB_USDG_DECIMALS=6
-ORB_CREDIT_PRICE_USDG_BASE_UNITS=100000
+ORB_CREDIT_PRICE_USDG_BASE_UNITS=3000
 ORB_PUBLIC_ORIGIN=http://127.0.0.1:5174
 ORB_ARBITRUM_RPC_URL=https://<trusted-arbitrum-sepolia-rpc>
 ORB_CREDIT_RECEIVER=0x<dedicated-staging-receiver>
@@ -153,7 +155,7 @@ Nothing in this guide has been deployed or provisioned automatically.
 | `ORB_CHAIN_ID` | `421614` |
 | `ORB_USDG_CONTRACT_ADDRESS` | `0xFFC95faa3d63Cde504a05B567C600B78C0b41892` |
 | `ORB_USDG_DECIMALS` | `6` |
-| `ORB_CREDIT_PRICE_USDG_BASE_UNITS` | `100000` |
+| `ORB_CREDIT_PRICE_USDG_BASE_UNITS` | `3000` |
 | `ORB_CREDIT_RECEIVER` | `0x<dedicated-staging-receiver>` |
 | `ORB_ARBITRUM_RPC_URL` | `https://<trusted-arbitrum-sepolia-rpc>` |
 | `ORB_PAYMENT_CONFIRMATIONS` | `3` |
@@ -169,7 +171,7 @@ Nothing in this guide has been deployed or provisioned automatically.
 Do not set a production SQLite path or Nimiq flag. No wallet private key or
 Supabase service-role key is needed. Use staging secrets rather than copying
 the production environment group. Check `/api/health` and
-`/api/orb/credits/config` for `payment_method=usdg`, chain 421614, price 100000,
+`/api/orb/credits/config` for `payment_method=usdg`, chain 421614, price 3000,
 and the exact token. Bootstrap must succeed against the isolated database.
 
 4. **Vercel Preview:** use the existing Orb Vercel project. Keep its Production
@@ -205,7 +207,7 @@ and the exact token. Bootstrap must succeed against the isolated database.
    faucet, request test tokens from Paxos/the event organizer; do not substitute
    a different USDG contract. Never enter your private key or recovery phrase.
 2. Import the official token contract above into MetaMask on chain 421614,
-   using symbol USDG and six decimals. Have at least 0.30 test USDG for the
+   using symbol USDG and six decimals. Have at least 0.009 test USDG for the
    three-credit test. Faucet tokens have no monetary value.
 3. Obtain **Arbitrum Sepolia ETH** for gas from a faucet listed in Paxos's guide
    or [Arbitrum's testnet guide](https://docs.arbitrum.io/for-devs/dev-tools-and-resources/chain-info).
@@ -213,7 +215,7 @@ and the exact token. Bootstrap must succeed against the isolated database.
 4. Open the actual USDG Preview URL. Connect, switch to Arbitrum Sepolia, sign
    the staging challenge, and record the starting Orb credit balance.
 5. Select three credits and click Buy credits with USDG. Check the server quote
-   displays **0.30 test USDG**. In MetaMask, confirm token contract, receiver,
+   displays **0.009 test USDG**. In MetaMask, confirm token contract, receiver,
    zero native transfer value, and ETH gas. Approve the single token transfer.
 6. Wait for three confirmations and backend verification. Save the quote ID
    and transaction hash from browser network requests and wallet activity.

@@ -69,11 +69,13 @@ class CreditConfig:
         if "usdg" in self.methods:
             if ((not self.payment_methods and self.deployment_target != "usdg-staging")
                     or self.usdg_contract.lower() != USDG_CONTRACT.lower()
-                    or self.usdg_decimals != USDG_DECIMALS or self.usdg_price != USDG_PRICE
+                    or self.usdg_decimals != USDG_DECIMALS
                     or self.receiver.lower() == USDG_CONTRACT.lower()
                     or (self.deployment_target == "usdg-staging"
                         and self.public_origin.rstrip("/") == "https://orb-azure-ten.vercel.app")):
                 raise ValueError("USDG requires explicit payment methods or the isolated staging target, and exact Paxos Sepolia token configuration.")
+            if type(self.usdg_price) is not int or self.usdg_price <= 0:
+                raise ValueError("USDG credit price must be a positive integer in base units.")
         if self.price_wei <= 0 or not 1 <= self.confirmations <= 100:
             raise ValueError("Invalid Orb testnet credit price or confirmation count.")
         if self.enabled:

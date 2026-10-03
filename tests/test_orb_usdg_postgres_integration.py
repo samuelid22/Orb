@@ -103,7 +103,7 @@ def verify_startup(ledger, after, tmp_path, monkeypatch):
         assert snapshot(ledger) == startup  # native replay cannot grant again
         quote = client.post('/api/orb/credits/quotes', headers=headers, json={'credits': 3, 'payment_method': 'usdg'})
         assert quote.status_code == 200, quote.text
-        assert quote.json()['amount_base_units'] == '300000'
+        assert quote.json()['amount_base_units'] == '9000'
         assert quote.json()['value_wei'] == '0'
         recovered = client.get('/api/jobs/recoverable-decode/result', headers=headers)
         assert recovered.status_code == 200, recovered.text

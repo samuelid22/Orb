@@ -61,18 +61,18 @@ def verify(state):
 
 def test_exact_quote_and_valid_payment_retry_restart(usdg):
     service, wallet, quote, rpc = usdg
-    assert quote["amount_base_units"] == "300000"
+    assert quote["amount_base_units"] == "9000"
     assert quote["value_wei"] == "0"
     assert quote["token_symbol"] == "USDG" and quote["token_decimals"] == 6
     assert quote["chain_id"] == 421614 and quote["status"] == "pending"
     assert quote["expires_at"] - quote["created_at"] == 900
-    assert quote["data"] == transfer_data(service.config.receiver, 300000)
+    assert quote["data"] == transfer_data(service.config.receiver, 9000)
     assert verify(usdg)["balance"]["available"] == 3
     assert verify(usdg)["balance"]["granted"] == 3
     restarted = CreditService(service.config, rpc)
     assert restarted.verify_purchase(wallet.address.lower(), quote["quote_id"], TX_HASH)["balance"]["available"] == 3
     one = service.create_quote(wallet.address.lower(), 1)
-    assert one["amount_base_units"] == "100000"
+    assert one["amount_base_units"] == "3000"
 
 
 @pytest.mark.parametrize("fault", [
@@ -90,7 +90,7 @@ def test_reject_invalid_payment_without_credit(usdg, fault):
     elif fault == "sender": rpc.tx["from"] = other
     elif fault == "log_sender": log["topics"][1] = "0x" + other[2:].rjust(64, "0")
     elif fault == "receiver": log["topics"][2] = "0x" + other[2:].rjust(64, "0")
-    elif fault == "amount": log["data"] = "0x" + f"{299999:064x}"
+    elif fault == "amount": log["data"] = "0x" + f"{8999:064x}"
     elif fault == "failed": rpc.receipt["status"] = "0x0"
     elif fault == "missing": rpc.receipt["logs"] = []
     elif fault == "short_data": log["data"] = "0x01"
@@ -183,11 +183,46 @@ def test_usdg_credits_use_existing_reservation_and_failure_release(usdg, tmp_pat
 
 @pytest.mark.parametrize("change", [
     {"chain_id": 1}, {"payment_method": "unknown"}, {"usdg_contract": "0x" + "11" * 20},
-    {"usdg_decimals": 18}, {"usdg_price": 99999}, {"deployment_target": ""},
+    {"usdg_decimals": 18}, {"usdg_price": 0}, {"deployment_target": ""},
     {"public_origin": "https://orb-azure-ten.vercel.app"}, {"receiver": USDG_CONTRACT},
 ])
 def test_fail_closed_configuration(usdg, change):
     with pytest.raises(ValueError): replace(usdg[0].config, **change)
+
+
+@pytest.mark.parametrize("price", [3000, 100000])
+def test_configurable_positive_price_preserves_exact_payment_verification(usdg, price):
+    original, wallet, _, rpc = usdg
+    service = CreditService(replace(original.config, usdg_price=price), rpc)
+    for credits in (1, 3, 5):
+        quote = service.create_quote(wallet.address.lower(), credits)
+        assert quote["amount_base_units"] == str(price * credits)
+        assert quote["data"] == transfer_data(service.config.receiver, price * credits)
+    rpc.paid_usdg(quote, wallet)
+    assert service.verify_purchase(wallet.address.lower(), quote["quote_id"], TX_HASH)["balance"]["granted"] == 5
+
+
+@pytest.mark.parametrize("price", [0, -3000, 3000.0, "3000", "invalid", True])
+def test_non_positive_or_non_integer_config_price_is_rejected(usdg, price):
+    with pytest.raises(ValueError, match="positive integer"):
+        replace(usdg[0].config, usdg_price=price)
+
+
+def test_price_change_does_not_reprice_an_existing_quote(usdg):
+    original, wallet, _, rpc = usdg
+    old_service = CreditService(replace(original.config, usdg_price=100000), rpc)
+    quote = old_service.create_quote(wallet.address.lower(), 3)
+    rpc.paid_usdg(quote, wallet)
+    updated = CreditService(replace(original.config, usdg_price=3000), rpc)
+    assert updated.verify_purchase(wallet.address.lower(), quote["quote_id"], TX_HASH)["balance"]["granted"] == 3
+    assert updated.create_quote(wallet.address.lower(), 3)["amount_base_units"] == "9000"
+
+
+def test_price_and_token_defaults_do_not_implicitly_enable_usdg(tmp_path):
+    config = CreditConfig(database=tmp_path / "native.sqlite3", usdg_price=3000)
+    assert config.methods == ("native_eth",)
+    with pytest.raises(ValueError):
+        replace(config, payment_method="usdg")  # legacy USDG needs its explicit staging target
 
 
 def test_existing_live_ledger_cannot_be_adopted(usdg, tmp_path):

@@ -1,4 +1,4 @@
-# Dual testnet payments — prepared on usdg-test, not deployed to main
+# Dual testnet payments
 
 Orb can expose **Test ETH** and **Paxos USDG** simultaneously on Arbitrum
 Sepolia (421614). Paxos test USDG has no monetary value. Both payments fund
@@ -7,9 +7,9 @@ credit. Wallet USDG balance display is not added in this pass.
 
 The user reported successful real USDG testing of the earlier single-method
 staging build: wallet authentication, 0.30 USDG / three credits, refresh
-persistence, AI credit consumption, and duplicate prevention. The new dual
-build and explicit migration need their own staging acceptance before merge.
-The live main site must not be described as supporting USDG yet.
+persistence, AI credit consumption, and duplicate prevention. Dual payments were subsequently reported working in production with the
+earlier 100000-base-unit price. The new intended price below is a code/config
+recommendation; this change does not deploy or alter production settings.
 
 ## Configuration and compatibility
 
@@ -18,7 +18,7 @@ ORB_PAYMENT_METHODS=native_eth,usdg
 ORB_CHAIN_ID=421614
 ORB_USDG_CONTRACT_ADDRESS=0xFFC95faa3d63Cde504a05B567C600B78C0b41892
 ORB_USDG_DECIMALS=6
-ORB_CREDIT_PRICE_USDG_BASE_UNITS=100000
+ORB_CREDIT_PRICE_USDG_BASE_UNITS=3000
 ```
 
 `ORB_PAYMENT_METHODS` is the explicit allow-list. Empty, unknown, or duplicate
@@ -30,8 +30,12 @@ two methods, the request MUST select one.
 
 Keep the current `ORB_CREDIT_PRICE_WEI`, receiver, trusted RPC, database URL,
 confirmation count, signed sessions, HTTPS origin, and AI settings. USDG is
-fixed at six decimals and 100000 integer base units per credit: one credit
-is 0.10 test USDG, three are 0.30. No floating-point payment arithmetic is used.
+fixed at six decimals. Its credit price is a configurable positive integer,
+with a default of 3000 base units: one credit is 0.003 test USDG, three are
+0.009, and five are 0.015. Explicit 100000 remains valid for earlier pricing.
+Zero, negative, and non-integer values fail startup. Price is separate from
+the fixed chain/token/decimals safety checks. No floating-point payment
+arithmetic is used; existing quotes retain their stored amount after repricing.
 Explicit multi-method configuration prepares eventual production use without
 requiring the `usdg-staging` target; do not enable it on production yet.
 
@@ -52,7 +56,7 @@ plus `payment_methods`:
     "usdg": {
       "enabled": true, "payment_method": "usdg", "token_symbol": "USDG",
       "token_contract": "0xFFC95faa3d63Cde504a05B567C600B78C0b41892",
-      "token_decimals": 6, "price_base_units": "100000"
+      "token_decimals": 6, "price_base_units": "3000"
     }
   }
 }
@@ -169,7 +173,7 @@ reconciliation of payments made after the backup.
    only to staging. Git auto-deployment remains disabled for this branch.
 4. Native ETH: select Test ETH, buy a small credit bundle, verify exact balance
    increase, refresh persistence, and one successful AI operation consuming one.
-5. USDG: select Paxos USDG, obtain three-credit 0.30 quote, approve ERC-20 transfer
+5. USDG: select Paxos USDG, obtain three-credit 0.009 quote, approve ERC-20 transfer
    using Sepolia ETH gas; verify exact +3 balance, refresh, and one AI consumption.
 6. Replay each same quote/hash verification; no new grant. Try each hash on a
    fresh quote of the OTHER method; both must reject. Test insufficient funds,
@@ -197,7 +201,7 @@ Use this compatible order instead of enabling both methods before frontend:
    omit `VITE_ORB_DEPLOYMENT_TARGET=usdg-staging`. It initially shows native only.
    This frontend sends explicit methods and also accepts legacy config.
 7. Enable `ORB_PAYMENT_METHODS=native_eth,usdg` on production Render and add the
-   exact token/decimals/100000 variables above. Keep chain 421614 and every
+   exact token/decimals and configurable price variables above. Keep chain 421614 and every
    existing native setting. Do not use the staging target/origin/database.
 8. Verify health/config, reload the production frontend, and verify both options.
    Stale pre-upgrade browser tabs may need refresh; no payment has been sent

@@ -30,6 +30,7 @@ from prometheus.api.dto import build_basic_result_dto, build_result_dto
 from prometheus.api.jobs import Job, JobManager
 from prometheus.api.orb_credits import CHAIN_ID, CreditConfig, CreditError, CreditService
 from prometheus.api.orb_deployment import validate_public_deployment
+from prometheus.api.orb_usdg import USDG_PRICE, parse_usdg_price
 from prometheus.api.payments import PaymentConfig, PaymentError, PaymentPending, PaymentService
 from prometheus.config import PrometheusConfig
 from prometheus.errors import PrometheusError
@@ -193,7 +194,7 @@ def create_app(
         chain_id=int(os.environ.get("ORB_CHAIN_ID", "421614")),
         usdg_contract=os.environ.get("ORB_USDG_CONTRACT_ADDRESS", "0xFFC95faa3d63Cde504a05B567C600B78C0b41892"),
         usdg_decimals=int(os.environ.get("ORB_USDG_DECIMALS", "6")),
-        usdg_price=int(os.environ.get("ORB_CREDIT_PRICE_USDG_BASE_UNITS", "100000")),
+        usdg_price=parse_usdg_price(os.environ.get("ORB_CREDIT_PRICE_USDG_BASE_UNITS", str(USDG_PRICE))),
         deployment_target=os.environ.get("ORB_DEPLOYMENT_TARGET", ""),
     ))
     if public_mode and (not credit_service.database.postgres

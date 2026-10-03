@@ -44,7 +44,7 @@ def test_quote_settlement_replay_restart_reserve_release_and_consume(dual, tmp_p
     quote = payment(dual, method)
     assert quote["payment_method"] == method
     assert int(quote["value_wei"]) == (3702 if method == "native_eth" else 0)
-    if method == "usdg": assert quote["amount_base_units"] == "300000"
+    if method == "usdg": assert quote["amount_base_units"] == "9000"
     assert verify(dual, quote)["balance"]["granted"] == 3
     assert verify(dual, quote)["balance"]["granted"] == 3
     with pytest.raises(CreditError, match="already paid"):
@@ -135,7 +135,7 @@ def test_api_config_and_explicit_quote_contract(dual, tmp_path, monkeypatch):
         config = client.get("/api/orb/credits/config").json()
         assert config["enabled"]
         assert config["payment_methods"]["native_eth"]["price_wei"] == "1234"
-        assert config["payment_methods"]["usdg"]["price_base_units"] == "100000"
+        assert config["payment_methods"]["usdg"]["price_base_units"] == "3000"
         assert all(config["payment_methods"][method]["enabled"] for method in ("native_eth", "usdg"))
         assert client.post("/api/orb/credits/quotes", headers=headers, json={"credits": 3}).status_code == 400
         for method in ("native_eth", "usdg"):

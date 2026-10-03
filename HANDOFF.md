@@ -979,3 +979,60 @@ a temporary process-only model override described below.
   the 16 intended changes. Populated env files remain ignored. Authorized
   delivery is one commit/push solely to `usdg-test` after validation, then stop;
   no production database/origin/environment or deployment action is authorized.
+
+
+## 2026-10-03 Populated disposable Postgres USDG migration rehearsal
+
+- Worked only in Orb on `usdg-test`, starting from clean
+  `a24a618ee0694e56e1528e0d6d3a434b163f7f6d`. Main/origin/main remain
+  `ed54ebe682ca64be6580f33887881b01099ae4f3`. No production database,
+  Render/Vercel configuration, original Prometheus, orb-demo-video, real wallet,
+  provider, or payment transaction was accessed or modified.
+- No local Postgres/container runtime existed. Used official portable EDB
+  PostgreSQL 17.11 binaries under ignored api_output, with an owned loopback-only
+  random-port TLS cluster. No Windows service/cloud infrastructure was created.
+  Added a runner that strips inherited configuration, never loads .env, creates
+  a unique cluster ownership marker, and stops only its owned cluster. Windows
+  inherited output-pipe handling was fixed in the test launcher, not Orb code.
+- Added eight opt-in real-Postgres integration cases. Each uses a new database
+  with exact POSTGRES_SCHEMA_V1 and synthetic sessions/wallets, balances, native
+  quotes/purchases, successful/released/reserved jobs and durable results.
+  Initial counts: schema_versions 1, challenges 2, sessions 2, balances 2,
+  quotes 4, purchases 3, reservations 6, results 4. Wallet A: granted 10,
+  consumed 2, reserved 2, available 6; wallet B: granted 3, consumed 1,
+  reserved 0, available 2.
+- Actual subprocess CLI: pre --check exit 2/no mutation; explicit migration
+  exit 0; post --check exit 0; repeat migration and final dry-run exit 0/no
+  changes. Adds only usdg_quotes and usdg_schema_versions with marker 1.
+  Full core row values/counts, columns/constraints/indexes, relation identities,
+  filenodes and row ctid/xmin stayed identical. No migration reconciliation or
+  credit release occurred. Existing migration code needed no fix.
+- Five separate malformed ledgers (partial USDG, extra core column, wrong
+  session column type, missing core table, unsupported USDG version/integrity)
+  refused both check/apply with exit 1 and no changes. Injected failure after
+  the first extension table rolled back all DDL. Two concurrent migration
+  commands succeeded under the advisory lock with one marker and unchanged core.
+- Real ASGI startup on migrated Postgres passed production paid guards using
+  synthetic config and mocked RPC, then showed both payment methods, preserved
+  authenticated access/native payment replay, issued a 300000-unit three-credit
+  USDG quote, and recovered the durable result. EXISTING restart reconciliation
+  consumed one reserved completed result and released one interrupted no-result
+  reservation; A became granted 10/consumed 3/reserved 0/available 7. Other
+  records/counts remained intact and a second startup made no further changes.
+  No recovery, pricing, auth, payment, AI, or database application logic changed.
+- Evidence: docs/MIGRATION_REHEARSAL.md and ignored JSON reports under
+  api_output/migration_rehearsal_runtime/<run-id>/reports. The focused real-PG
+  run was 97ca51a0bb7a4fe88865f32c135a0c7d: eight passed. These are actual
+  Postgres migrations, not SQL doubles; blockchain RPC is mocked and AI is
+  not called. Frontend: 59 passed (four files). Guarded staging production
+  build passed with a non-routable HTTPS API origin.
+- Full backend validation passed: **261 tests**, including all eight real-PG
+  cases (112 existing FastAPI deprecation warnings), in 365.97 seconds. The
+  full-suite cluster run was 7c4e08d7d74a45f29ae407d741712623; its reports are
+  saved alongside the focused run, and both owned servers were stopped. No commit/push/merge/deployment was performed. Portable binaries,
+  TLS keys, clusters and raw runtime reports are ignored, as are populated env
+  files. Remaining: real dual staging acceptance, separate merge/production
+  approval, verified backup/restore, authorized production check/migration,
+  core-record comparison, compatible native-first rollout, then real payments.
+  Finish active AI work before backend restart; the migration itself does not
+  reconcile jobs. See docs/DUAL_PAYMENTS.md for the exact rollout.

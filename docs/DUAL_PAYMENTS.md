@@ -221,3 +221,18 @@ doubles. They cover dual config/quotes/payments, cross-method failures, global
 replay, atomic rollback, concurrency, unchanged native behavior, selector states,
 and migration validation/rollback/retry. Live dual payment and real Postgres
 migration rehearsal remain required; no deployed database was accessed here.
+
+
+## Disposable populated-Postgres rehearsal (2026-10-03)
+
+The explicit migration was rehearsed on an owned local PostgreSQL 17.11 cluster
+with TLS and synthetic populated core-v1 records. Eight real-Postgres tests
+passed: read-only check, additive migration, unchanged core data/schema/physical
+rows, idempotent retries, five failure cases, atomic DDL rollback, concurrent
+migrations, and dual-mode application startup/recovery. See
+[MIGRATION_REHEARSAL.md](MIGRATION_REHEARSAL.md) for snapshots, commands,
+expected startup reconciliation, and remaining approval gates. This satisfies
+the local real-Postgres rehearsal requirement; it does not establish live dual
+payment acceptance or authorize production migration. No production service or
+database was accessed. The earlier validation paragraph above describes the
+previous code-preparation pass and its test doubles.

@@ -129,10 +129,11 @@ class DatabaseSession:
 
 
 class OrbDatabase:
-    def __init__(self, sqlite_path: Path, postgres_url: str = ""):
+    def __init__(self, sqlite_path: Path, postgres_url: str = "", *, usdg_staging: bool = False):
         self.sqlite_path = sqlite_path
         self.postgres_url = postgres_url
         self.postgres = bool(postgres_url)
+        self.usdg_staging = usdg_staging
         if self.postgres:
             validate_postgres_url(postgres_url)
             self._initialize_postgres()
@@ -141,6 +142,45 @@ class OrbDatabase:
             with sqlite3.connect(sqlite_path, timeout=15) as setup:
                 setup.execute("PRAGMA journal_mode=WAL")
                 setup.executescript(SQLITE_SCHEMA)
+                if usdg_staging:
+                    setup.execute("BEGIN IMMEDIATE")
+                    self._initialize_usdg(setup, False)
+
+    @staticmethod
+    def _initialize_usdg(connection, postgres: bool) -> None:
+        """Additive staging extension v1; never adopt an existing live ledger."""
+        prefix = "orb." if postgres else ""
+        if postgres:
+            present = connection.execute("SELECT to_regclass('orb.usdg_schema_versions') AS ledger").fetchone()["ledger"]
+        else:
+            present = connection.execute("SELECT name FROM sqlite_master WHERE name='usdg_schema_versions'").fetchone()
+        if present:
+            versions = connection.execute(f"SELECT version FROM {prefix}usdg_schema_versions").fetchall()
+            values = [row["version"] if postgres else row[0] for row in versions]
+            if values != [1]:
+                raise RuntimeError("Unsupported USDG staging ledger version.")
+            return
+        for table in ("balances", "sessions", "challenges", "quotes", "purchases", "reservations"):
+            if connection.execute(f"SELECT 1 FROM {prefix}{table} LIMIT 1").fetchone():
+                raise RuntimeError("USDG requires an isolated fresh staging database, not an existing Orb ledger.")
+        OrbDatabase._create_usdg(connection, postgres)
+
+    @staticmethod
+    def _create_usdg(connection, postgres: bool) -> None:
+        """Shared additive DDL; callers must first validate or require a fresh ledger."""
+        prefix = "orb." if postgres else ""
+        # Core schema version stays at 1. Old native-ETH code ignores these
+        # extra tables; no existing table is altered or existing row updated.
+        integer = "BIGINT" if postgres else "INTEGER"
+        connection.execute(f"""CREATE TABLE {prefix}usdg_quotes (
+            quote_id TEXT PRIMARY KEY REFERENCES {prefix}quotes(id),
+            chain_id INTEGER NOT NULL CHECK(chain_id = 421614),
+            token_contract TEXT NOT NULL, token_decimals INTEGER NOT NULL CHECK(token_decimals = 6),
+            receiver TEXT NOT NULL, amount_base_units {integer} NOT NULL CHECK(amount_base_units > 0),
+            created_at {integer} NOT NULL, created_block {integer} NOT NULL CHECK(created_block >= 0)
+        )""")
+        connection.execute(f"CREATE TABLE {prefix}usdg_schema_versions (version INTEGER PRIMARY KEY CHECK(version = 1))")
+        connection.execute(f"INSERT INTO {prefix}usdg_schema_versions VALUES (1)")
 
     def _connect_postgres(self):
         try:
@@ -173,6 +213,8 @@ class OrbDatabase:
                 connection.execute("INSERT INTO orb.schema_versions(version) VALUES (1)")
             elif [row["version"] for row in versions] != [1]:
                 raise RuntimeError("Orb Postgres schema version is unsupported; migrate it explicitly.")
+            if getattr(self, "usdg_staging", False):
+                self._initialize_usdg(connection, True)
             connection.commit()
         except BaseException:
             connection.rollback()

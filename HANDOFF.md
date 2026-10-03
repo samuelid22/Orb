@@ -850,3 +850,214 @@ a temporary process-only model override described below.
   doubles where documented; no live provider call, Supabase verification, or
   on-chain transaction was performed during this documentation task.
 - No commit, push, or deployment was performed.
+
+## 2026-10-02 USDG staging database isolation review
+
+- Started from clean `main` at `ed54ebe682ca64be6580f33887881b01099ae4f3`
+  and created the requested local `usdg-test` branch. Main remains unchanged.
+- Inspected the existing payment service and Postgres schema without reading
+  populated environment files or connecting to any deployed database.
+- Sharing production's current ledger is unsafe: all Postgres connections use
+  the fixed `orb` schema; balances are keyed only by wallet; sessions, quotes,
+  purchases, reservations, and results have no deployment/environment scope.
+  Startup reconciliation visits every reserved job and can release a live
+  production job's reservation if its result has not yet been stored.
+- Per the user's section 10 stop instruction, payment implementation is
+  paused pending agreement on isolated staging storage. Recommended minimum:
+  a separate staging Postgres database with separate credentials and a staging
+  `ORB_DATABASE_URL`; a separate Supabase project is one way to provide it.
+  No production database URL or environment group should be reused. A separate
+  schema in the existing database would require deliberate schema selection
+  and database role permissions; the current code does not support it safely.
+- No application code, schema, payment configuration, production deployment,
+  Prometheus, or orb-demo-video files were changed. Only this HANDOFF entry was
+  added on `usdg-test`. No tests were rerun because application code is unchanged.
+- No infrastructure was created, and no commit, push, migration, deployment,
+  wallet signature, or transaction was performed.
+
+## 2026-10-02 Paxos test USDG implementation on usdg-test
+
+- The user approved an isolated staging Postgres database; implementation
+  resumed on `usdg-test`. The unchanged main baseline is
+  `ed54ebe682ca64be6580f33887881b01099ae4f3`. No existing environment file,
+  production database/service, Prometheus, or orb-demo-video was modified.
+- Native ETH remains the default when USDG variables are absent. USDG mode
+  requires the explicit `usdg-staging` target, Arbitrum Sepolia 421614, official
+  Paxos token `0xFFC95faa3d63Cde504a05B567C600B78C0b41892`, six decimals,
+  and integer pricing of 100000 base units per credit.
+- USDG quotes store wallet, receiver, token, exact amount, creation time/block,
+  deadline, and completion via the existing quote record. Standard ERC-20
+  transfer calldata has no quote ID; a matching transfer is assigned once to
+  its verified quote, protected by global transaction and quote uniqueness.
+  Payments must be mined after quote creation and verified before expiry.
+- Backend verification independently checks network, receipt success,
+  canonical block and confirmations, wallet/target/value/calldata, receiver
+  EOA, token code/decimals, and one exact well-formed nonremoved Transfer log.
+  Credit grant, purchase insertion, and quote completion are atomic. Concurrent
+  same-quote retries return the existing grant without incrementing twice.
+- Added USDG extension version 1: `orb.usdg_quotes` and
+  `orb.usdg_schema_versions`, with a quote foreign key, integer constraints,
+  and transactional/advisory-locked fresh database bootstrap. Core schema
+  version 1 and existing columns stay intact. USDG refuses an unmarked,
+  nonempty Orb ledger. No hosted migration was applied. Local USDG defaults
+  to separate SQLite; public staging requires its own Postgres URL.
+- Wallet sends only from/to/value/data; USDG target is the configured token,
+  native value is zero, and data is a server-quoted ERC-20 transfer. Wallet
+  controls gas/fees and requests user approval. Added concise USDG/gas copy,
+  quote validation, pending-payment protection, and wallet rejection/funds
+  guidance. Wallet/session/AI credit-reservation and job-recovery flows remain.
+- Staging build rejects the current production backend and Production USDG
+  deployments; staging wallet refuses a backend not identifying as USDG
+  staging. Vercel Git auto-deploy for `usdg-test` is disabled in branch config
+  so the authorized push does not publish a preview automatically. Production
+  branch configuration and external settings were not changed.
+- `.env.example`, README, and `docs/USDG_STAGING.md` document safe placeholders,
+  isolated Supabase setup, Render staging, branch-scoped Vercel Preview values,
+  exact origin/CORS, test-asset acquisition, and the manual acceptance flow.
+  No new runtime dependency or payment contract was added.
+- Validation: full backend **225 passed**, with 106 FastAPI deprecation
+  warnings; full frontend **49 passed** across 4 files; guarded staging build
+  passed with a placeholder HTTPS API origin. Tests include default native
+  regressions, USDG faults/expiry/replays/concurrency/rollback, signed purchase
+  followed by paid Enhance, result recovery, and staging isolation. Blockchain
+  and AI use mocks; Postgres uses SQL-recording/SQLite-backed doubles. No live
+  Supabase, Gemini, or USDG transaction verification was performed in this pass.
+- Ready for the user-authorized commit/push to `usdg-test`, then stop before
+  cloud creation/deployment. Staging credentials, actual preview origin,
+  receiver, faucet funds, live database bootstrap, and one real payment/AI
+  acceptance test remain external setup work.
+
+## 2026-10-02 Dual-payment preparation and explicit USDG migration
+
+- Started from clean `usdg-test` at `fc9a9c838347f637bda0b559928f933243b0beab`.
+  Main and origin/main remain `ed54ebe682ca64be6580f33887881b01099ae4f3`.
+  The user reported real single-method USDG staging success: 0.30 USDG,
+  three credits, persistence, AI consumption, and no duplicate grants. This
+  pass prepares dual methods; it does not claim their live staging acceptance.
+- Added `ORB_PAYMENT_METHODS=native_eth,usdg`. The explicit list takes
+  precedence over the legacy single switch; absent variables preserve native
+  ETH. USDG token/chain/decimals/100000 price checks remain. Explicit methods
+  prepare eventual production activation without a staging-only requirement;
+  the legacy USDG switch and designated staging origins keep their safeguards.
+- Config exposes server-enabled structured methods; quotes explicitly select
+  a method when both are enabled. Single-method omitted selection remains
+  compatible. Existing native price/receiver/ORB1 calldata and verification
+  remain; USDG uses exact server-quoted transfer calldata, zero ETH, and receipt
+  Transfer verification. Verification dispatches by persisted quote metadata,
+  not client claims or the backend's default method. Both assets share global
+  purchase-hash/quote uniqueness and atomic credit grants.
+- Added compact Test ETH / Paxos USDG selection, pressed-state accessibility,
+  method-specific notices/funds guidance, and explicit quote requests. UI shows
+  only enabled methods and blocks another payment while one is pending.
+  Wallet/session/job recovery, AI operations, credit lifecycle, and balances
+  are unchanged. No wallet USDG balance query or dependency was added.
+- Added `python -m prometheus.api.orb_usdg_migrate --check` (alias `--dry-run`)
+  and the explicit migration without flags. The command reads privately supplied
+  ORB_DATABASE_URL, never imports the app or loads .env, and checks core v1
+  columns/constraints/version plus extension shape. Missing/extra/partial or
+  unsupported schemas fail closed. Checks are read-only: exit 0 ready, 2
+  migration required, 1 refused. Migration adds only usdg_quotes and extension
+  marker in one advisory-locked transaction, verifies, and safely retries. No
+  balance/session/purchase/job/result row is changed or reconciled. Startup
+  still rejects a populated unmarked ledger; no production migration was run.
+- README, .env.example, USDG staging guide and docs/DUAL_PAYMENTS.md document
+  staging dual acceptance, production backup/migration rehearsal, commands,
+  configuration, and compatible rollout: new backend native-only, new frontend,
+  then enable both methods. Old tabs may require refresh. Existing staging
+  isolation/build guard and disabled Git auto-deploy remain. No merge, hosted
+  environment change, production database/service change, Prometheus edit,
+  orb-demo-video edit, or blockchain transaction was performed.
+- Final validation: complete backend **253 passed** with 108 existing FastAPI
+  deprecation warnings; complete frontend **59 passed** across four files;
+  guarded staging production build passed with a non-routable HTTPS origin.
+  Frontend ran with one threads worker after a fork-worker startup timeout;
+  initial sandbox Node/temp-directory access errors were resolved with normal
+  filesystem access. Targeted final dual/migration tests also passed (28).
+  RPC/AI and Postgres catalogs use doubles; real Postgres migration rehearsal
+  and real dual-method staging payments remain pre-merge acceptance gates.
+- Secret/runtime review found no real credentials or private runtime files in
+  the 16 intended changes. Populated env files remain ignored. Authorized
+  delivery is one commit/push solely to `usdg-test` after validation, then stop;
+  no production database/origin/environment or deployment action is authorized.
+
+
+## 2026-10-03 Populated disposable Postgres USDG migration rehearsal
+
+- Worked only in Orb on `usdg-test`, starting from clean
+  `a24a618ee0694e56e1528e0d6d3a434b163f7f6d`. Main/origin/main remain
+  `ed54ebe682ca64be6580f33887881b01099ae4f3`. No production database,
+  Render/Vercel configuration, original Prometheus, orb-demo-video, real wallet,
+  provider, or payment transaction was accessed or modified.
+- No local Postgres/container runtime existed. Used official portable EDB
+  PostgreSQL 17.11 binaries under ignored api_output, with an owned loopback-only
+  random-port TLS cluster. No Windows service/cloud infrastructure was created.
+  Added a runner that strips inherited configuration, never loads .env, creates
+  a unique cluster ownership marker, and stops only its owned cluster. Windows
+  inherited output-pipe handling was fixed in the test launcher, not Orb code.
+- Added eight opt-in real-Postgres integration cases. Each uses a new database
+  with exact POSTGRES_SCHEMA_V1 and synthetic sessions/wallets, balances, native
+  quotes/purchases, successful/released/reserved jobs and durable results.
+  Initial counts: schema_versions 1, challenges 2, sessions 2, balances 2,
+  quotes 4, purchases 3, reservations 6, results 4. Wallet A: granted 10,
+  consumed 2, reserved 2, available 6; wallet B: granted 3, consumed 1,
+  reserved 0, available 2.
+- Actual subprocess CLI: pre --check exit 2/no mutation; explicit migration
+  exit 0; post --check exit 0; repeat migration and final dry-run exit 0/no
+  changes. Adds only usdg_quotes and usdg_schema_versions with marker 1.
+  Full core row values/counts, columns/constraints/indexes, relation identities,
+  filenodes and row ctid/xmin stayed identical. No migration reconciliation or
+  credit release occurred. Existing migration code needed no fix.
+- Five separate malformed ledgers (partial USDG, extra core column, wrong
+  session column type, missing core table, unsupported USDG version/integrity)
+  refused both check/apply with exit 1 and no changes. Injected failure after
+  the first extension table rolled back all DDL. Two concurrent migration
+  commands succeeded under the advisory lock with one marker and unchanged core.
+- Real ASGI startup on migrated Postgres passed production paid guards using
+  synthetic config and mocked RPC, then showed both payment methods, preserved
+  authenticated access/native payment replay, issued a 300000-unit three-credit
+  USDG quote, and recovered the durable result. EXISTING restart reconciliation
+  consumed one reserved completed result and released one interrupted no-result
+  reservation; A became granted 10/consumed 3/reserved 0/available 7. Other
+  records/counts remained intact and a second startup made no further changes.
+  No recovery, pricing, auth, payment, AI, or database application logic changed.
+- Evidence: docs/MIGRATION_REHEARSAL.md and ignored JSON reports under
+  api_output/migration_rehearsal_runtime/<run-id>/reports. The focused real-PG
+  run was 97ca51a0bb7a4fe88865f32c135a0c7d: eight passed. These are actual
+  Postgres migrations, not SQL doubles; blockchain RPC is mocked and AI is
+  not called. Frontend: 59 passed (four files). Guarded staging production
+  build passed with a non-routable HTTPS API origin.
+- Full backend validation passed: **261 tests**, including all eight real-PG
+  cases (112 existing FastAPI deprecation warnings), in 365.97 seconds. The
+  full-suite cluster run was 7c4e08d7d74a45f29ae407d741712623; its reports are
+  saved alongside the focused run, and both owned servers were stopped. No commit/push/merge/deployment was performed. Portable binaries,
+  TLS keys, clusters and raw runtime reports are ignored, as are populated env
+  files. Remaining: real dual staging acceptance, separate merge/production
+  approval, verified backup/restore, authorized production check/migration,
+  core-record comparison, compatible native-first rollout, then real payments.
+  Finish active AI work before backend restart; the migration itself does not
+  reconcile jobs. See docs/DUAL_PAYMENTS.md for the exact rollout.
+
+## 2026-10-03 Migration CLI suppressed-exception diagnosis
+
+- Inspected clean application sources on `usdg-test` at
+  `ba321cbb2a6fe2cc3bb8b9aa60d346f39a904f8f`. The user's untracked
+  `backups/` directory was neither opened nor modified.
+- Plain `python` in this session resolves to the global Python 3.13 executable,
+  which has no `psycopg` or `psycopg_binary`. Orb's `.venv` has both installed.
+  The production database environment variable remains unavailable to this
+  Codex process; no production connection or schema inspection was attempted.
+- Reproduced the suppressed exception using only a synthetic connection URL.
+  `_connect_postgres()` fails at `import psycopg` with
+  `ModuleNotFoundError: No module named 'psycopg'`, wraps it as
+  `RuntimeError: Orb could not connect to its production Postgres database.`,
+  and the migration CLI's broad exception handler emits the reported generic
+  message and exit 1. No SQL is executed in this failure path.
+- Minimal correction: in the same private PowerShell environment where psql
+  succeeds, use `.\.venv\Scripts\python.exe -m prometheus.api.orb_usdg_migrate
+  --check`. This selects Orb's installed dependencies. It does not establish
+  what the production schema check will return once the correct interpreter
+  is used; another live error would require diagnosis in that private session.
+- No application behavior was changed and no temporary diagnostic mode was
+  needed. No credentials were printed, production records modified, write
+  migration applied, merge/deployment/configuration change made, or commit
+  created. Only this handoff records the local diagnostic evidence.

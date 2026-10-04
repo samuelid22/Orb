@@ -1091,3 +1091,40 @@ a temporary process-only model override described below.
   database or service configuration was changed; no deployment was performed.
   Changes are confined to independent Orb. Populated .env files, secrets,
   backups, uploads, results and runtime databases remain excluded from Git.
+
+## 2026-10-04 Credit config recovery and wallet restoration isolation
+
+- Fixed the frontend conflation of pending/failed payment config requests with
+  explicit server-disabled configuration. `web/wallet.js` now keeps parsed
+  configuration separate from loading/ready/disabled/unavailable state.
+  Only a successfully fetched explicit `enabled: false` shows
+  "Testnet credits are not configured on this Orb server."
+- Initial pending requests show "Loading credit options…". Transient request,
+  timeout, HTTP error (including unexpected 401/403), invalid JSON or invalid
+  response failures show "Credit service is starting…". Exhaustion shows
+  "Credit service temporarily unavailable. Try again." Success clears the
+  temporary warning and renders the server's payment methods without refresh.
+- One shared config task prevents concurrent requests/retry cycles. Each
+  request has a 15-second abort timeout; retry backoff is 1/2/4/8 seconds,
+  capped at 8 seconds, with at most 12 attempts and a two-minute total budget.
+  Explicit disabled responses are not retried. The header opens the panel
+  safely while loading and can restart recovery after exhausted retries.
+- Config validation/payment rendering precede independent network and session
+  restoration. A wallet provider, saved-session or balance restoration failure
+  cannot erase valid payment config. The isolated USDG Preview guard and legacy
+  single-method compatibility remain intact; ready responses must have usable
+  server-enabled payment metadata before purchase controls become available.
+- Added 27 mocked-fetch/wallet frontend tests covering delayed responses,
+  network/CORS failures, 503/401/403, invalid responses, timeout/abort ordering,
+  late stale responses, bounded retry/backoff, manual recovery, disabled state,
+  both payment options and wallet/session/network restoration independence.
+  Full frontend: 89 passed. Guarded main production frontend build passed with
+  https://orb-api.example.invalid. Full backend: 274 passed, 8 opt-in real-
+  Postgres tests skipped, 114 existing FastAPI deprecation warnings. Provider,
+  wallet and blockchain integration checks used mocks; no live payment or AI
+  operation was performed in this pass.
+- No backend, pricing, quote/transaction/verification, database, auth protocol,
+  session expiry, AI/job recovery or Render/Vercel configuration code changed.
+  No production services/databases or secrets were accessed. User authorized
+  commit/push to main after full validation; production automatic Git deployments
+  were previously confirmed disabled. Original Prometheus remains untouched.

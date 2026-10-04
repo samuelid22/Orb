@@ -8,6 +8,15 @@ const PENDING_KEY = "orb-sepolia-pending-payment";
 const SESSION_KEY = "orb-wallet-session";
 const DISCONNECTED_KEY = "orb-wallet-disconnected";
 const ACTIVE_JOB_KEY = "orb-active-paid-job";
+const CONFIG_TIMEOUT_MS = 15000;
+const CONFIG_DEADLINE_MS = 120000;
+const CONFIG_MAX_ATTEMPTS = 12;
+const CONFIG_BACKOFF_MS = [1000, 2000, 4000, 8000];
+const CONFIG_MESSAGES = {
+  loading: "Loading credit options…",
+  disabled: "Testnet credits are not configured on this Orb server.",
+  unavailable: "Credit service is starting…",
+};
 
 export function initWallet({ onBalance }) {
   const el = (id) => document.getElementById(id);
@@ -21,6 +30,8 @@ export function initWallet({ onBalance }) {
   const retryButton = el("wallet-retry");
   const count = el("credit-count");
   let config = null;
+  let configState = "loading";
+  let configTask = null;
   let paymentMethods = {};
   let selectedMethod = null;
   let token = null;
@@ -55,11 +66,11 @@ export function initWallet({ onBalance }) {
     el("wallet-address").textContent = address ? `Authenticated wallet · ${address.slice(0, 6)}…${address.slice(-4)}` : "";
     el("wallet-address").title = address || "";
     el("wallet-balance").textContent = `${balance} testnet credit${balance === 1 ? "" : "s"} available`;
-    el("wallet-purchase").classList.toggle("hidden", !verified || !config?.enabled);
+    el("wallet-purchase").classList.toggle("hidden", !verified || configState !== "ready");
     disconnectButton.classList.toggle("hidden", !verified);
     disconnectButton.disabled = busy;
     connectButton.textContent = verified ? "Connected" : token ? "Retry session" : walletAccount ? "Sign again" : "Connect and sign";
-    connectButton.disabled = busy || verified || !config?.enabled;
+    connectButton.disabled = busy || verified || configState !== "ready";
     headerButton.textContent = verified ? "Connected" : "Connect Wallet";
     headerButton.setAttribute("aria-label", verified ? "Wallet connected. Open Wallet & Credits" : "Connect wallet");
     headerButton.classList.toggle("connected", verified);
@@ -182,13 +193,17 @@ export function initWallet({ onBalance }) {
 
   async function connect() {
     if (busy) return;
+    if (configState !== "ready") {
+      setFeedback(CONFIG_MESSAGES[configState]);
+      if (configState === "unavailable") void loadConfig();
+      return;
+    }
     busy = true;
     disconnected = false;
     sessionStorage.removeItem(DISCONNECTED_KEY);
     let attemptEpoch = authEpoch;
     update();
     try {
-      if (!config?.enabled) throw new Error("Testnet credits are not configured on this Orb server.");
       const accounts = await window.ethereum?.request?.({ method: "eth_requestAccounts" });
       if (!accounts?.[0]) throw new Error("No wallet account was selected.");
       if (attemptEpoch !== authEpoch && walletAccount?.toLowerCase() !== accounts[0].toLowerCase()) return;
@@ -272,9 +287,6 @@ export function initWallet({ onBalance }) {
   }
 
   function renderMethods() {
-    // Legacy single-method config is supported; structured config is authoritative.
-    paymentMethods = config.payment_methods || (config.payment_method === "usdg"
-      ? { usdg: { ...config, enabled: true } } : { native_eth: { ...config, enabled: true } });
     const options = el("payment-method-options");
     options.replaceChildren();
     for (const [method, label] of [["native_eth", "Test ETH"], ["usdg", "Paxos USDG"]]) {
@@ -290,7 +302,100 @@ export function initWallet({ onBalance }) {
     const pending = pendingPayment();
     selectMethod(paymentMethods[pending?.paymentMethod]?.enabled ? pending.paymentMethod
       : paymentMethods.native_eth?.enabled ? "native_eth" : "usdg");
-    if (!selectedMethod) throw new Error("No supported payment method is enabled.");
+  }
+
+  function validateConfig(loaded) {
+    if (!loaded || Array.isArray(loaded) || typeof loaded.enabled !== "boolean") {
+      throw new Error("Invalid credit configuration response.");
+    }
+    if (import.meta.env.VITE_ORB_DEPLOYMENT_TARGET === "usdg-staging"
+        && (!(loaded.payment_methods?.usdg?.enabled || loaded.payment_method === "usdg")
+            || loaded.deployment_target !== "usdg-staging")) {
+      throw new Error("This preview requires the isolated USDG staging backend.");
+    }
+    if (!loaded.enabled) return {};
+    // Retain legacy single-method support; never invent structured methods.
+    const methods = loaded.payment_methods || (loaded.payment_method === "usdg"
+      ? { usdg: { ...loaded, enabled: true } } : { native_eth: { ...loaded, enabled: true } });
+    const enabled = ["native_eth", "usdg"].filter((method) => methods[method]?.enabled === true);
+    if (!enabled.length) throw new Error("No supported payment method is enabled.");
+    for (const method of enabled) {
+      const value = methods[method];
+      if (method === "native_eth" && !/^[1-9][0-9]*$/.test(value.price_wei)) {
+        throw new Error("Invalid native payment configuration.");
+      }
+      if (method === "usdg" && (value.token_decimals !== 6
+          || !/^0x[0-9a-fA-F]{40}$/.test(value.token_contract)
+          || (value.price_base_units !== undefined && !/^[1-9][0-9]*$/.test(value.price_base_units)))) {
+        throw new Error("Invalid USDG payment configuration.");
+      }
+    }
+    return Object.fromEntries(enabled.map((method) => [method, methods[method]]));
+  }
+
+  async function requestConfig(timeout) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(apiUrl("/api/orb/credits/config"), { signal: controller.signal });
+      if (!response.ok) throw new Error("Credit configuration request failed.");
+      const loaded = await response.json();
+      return { loaded, methods: validateConfig(loaded) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function restoreWallet() {
+    if (!window.ethereum?.request) return;
+    // Wallet/network failures must never invalidate a successful config fetch.
+    await network().catch(() => {
+      el("wallet-network").textContent = "Wallet network unavailable. Try again.";
+    });
+    try {
+      await restoreSession();
+    } catch {
+      setFeedback("Could not restore wallet session. Connect and sign again.");
+      update();
+    }
+  }
+
+  function loadConfig() {
+    if (configTask) return configTask;
+    setFeedback(CONFIG_MESSAGES[configState]);
+    configTask = (async () => {
+      const deadline = Date.now() + CONFIG_DEADLINE_MS;
+      for (let attempt = 0; attempt < CONFIG_MAX_ATTEMPTS && Date.now() < deadline; attempt += 1) {
+        let result;
+        try {
+          result = await requestConfig(Math.min(CONFIG_TIMEOUT_MS, deadline - Date.now()));
+        } catch {
+          configState = "unavailable";
+          setFeedback(CONFIG_MESSAGES.unavailable);
+          update();
+          if (attempt + 1 < CONFIG_MAX_ATTEMPTS && Date.now() < deadline) {
+            const delay = CONFIG_BACKOFF_MS[Math.min(attempt, CONFIG_BACKOFF_MS.length - 1)];
+            await new Promise((resolve) => setTimeout(resolve, Math.min(delay, deadline - Date.now())));
+          }
+          continue;
+        }
+        config = result.loaded;
+        paymentMethods = result.methods;
+        configState = config.enabled ? "ready" : "disabled";
+        if (configState === "disabled") {
+          setFeedback(CONFIG_MESSAGES.disabled);
+          update();
+          return;
+        }
+        renderMethods();
+        setFeedback("Connect a wallet to see your testnet credits.");
+        update();
+        void restoreWallet();
+        return;
+      }
+      setFeedback("Credit service temporarily unavailable. Try again.");
+    })().finally(() => { configTask = null; });
+    return configTask;
   }
 
   async function verifyPending(attempts = 0) {
@@ -429,6 +534,10 @@ export function initWallet({ onBalance }) {
   connectButton.addEventListener("click", () => void (token && !verified ? refresh() : connect()));
   headerButton.addEventListener("click", () => {
     open();
+    if (configState !== "ready") {
+      void connect();
+      return;
+    }
     if (!verified) void (token ? refresh() : connect());
   });
   disconnectButton.addEventListener("click", () => void disconnect());
@@ -451,28 +560,9 @@ export function initWallet({ onBalance }) {
     clearSession("Wallet network changed. Switch to Arbitrum Sepolia and sign again.");
     void network().catch(() => {});
   });
-  void (async () => {
-    try {
-      const loadedConfig = await json("/api/orb/credits/config");
-      if (import.meta.env.VITE_ORB_DEPLOYMENT_TARGET === "usdg-staging"
-          && (!(loadedConfig.payment_methods?.usdg?.enabled || loadedConfig.payment_method === "usdg")
-              || loadedConfig.deployment_target !== "usdg-staging")) {
-        throw new Error("This preview requires the isolated USDG staging backend.");
-      }
-      config = loadedConfig;
-      renderMethods();
-      if (!config.enabled) setFeedback("Testnet payments are not configured on this server.");
-      else setFeedback("Connect a wallet to see your testnet credits.");
-      count.dispatchEvent(new Event("change"));
-      if (window.ethereum?.request) {
-        await network().catch(() => {});
-        await restoreSession();
-      }
-    } catch { config = null; setFeedback("Could not load testnet payment configuration."); }
-    update();
-  })();
+  void loadConfig();
   update();
   return { open, close, refresh, headers, requireAuthentication, hasCredit: () => verified && balance > 0,
     isAuthenticated: () => verified, walletAddress: () => verified ? address : null,
-    isEnabled: () => !!config?.enabled };
+    isEnabled: () => configState === "ready" };
 }

@@ -1128,3 +1128,41 @@ a temporary process-only model override described below.
   No production services/databases or secrets were accessed. User authorized
   commit/push to main after full validation; production automatic Git deployments
   were previously confirmed disabled. Original Prometheus remains untouched.
+
+## 2026-10-05 Mobile file readability recovery
+
+- Decode/Compose image and video uploads now stay on the selection screen with
+  an accessible "Checking file…" status before any upload/processing UI appears.
+  A small 64 KB prefix is checked; no full-file browser buffering was added.
+- `web/file-readability.js` permits only two additional local reads for
+  NotReadableError/NotFoundError, after 300 ms and 800 ms. Each read has a
+  five-second timeout. Other errors/timeouts are not retried. FileReader provides
+  the same bounded prefix check when Blob.arrayBuffer is unavailable.
+- Persistent failures clear the saved File, input value and attempt state,
+  restore selection controls, and show "Couldn't access this video/image" with
+  concise Files/Browse guidance. Diagnostics remain in the console. Orb does not
+  claim it can force an Android provider. Normal picker cancellation preserves
+  the selection; clearing a pending check aborts it. Late or superseded reads
+  cannot start an upload, including after a replacement File succeeds.
+- Local retries construct no FormData and send no media/job request, so no
+  backend job or credit reservation/consumption begins. A successful check
+  proceeds to readiness and one existing authenticated/idempotent upload POST.
+  HTTP upload retries, payments, pricing, database, AI/FFmpeg behavior, job
+  recovery and infrastructure remain unchanged. A readable prefix still cannot
+  guarantee that the remainder stays accessible throughout upload.
+- Added focused helper and rendered frontend tests for immediate success,
+  bounded retry/backoff, third-read success, non-retryable errors, timeout/late
+  resolution, cancellation/replacement, clean image/video failures, fresh
+  same-name selection, empty files, Decode/Compose, repeated clicks and paid
+  authentication/idempotency preservation. Full frontend: 110 passed. Guarded
+  production build passed using https://orb-api.example.invalid.
+- Full backend: 274 passed, 8 opt-in real-Postgres tests skipped, 114 existing
+  FastAPI deprecation warnings. An initial run's two guard failures came from
+  the runner's temporary PROMETHEUS_FFMPEG_DIR variable; supplying FFmpeg through
+  the test process PATH made the complete suite pass without backend changes.
+- No production services/database, live AI quota or on-chain transactions were
+  used. Secrets and runtime artifacts remain excluded. Original Prometheus is
+  untouched. User authorized commit/push to main after validation; automatic
+  production Git deployments were previously confirmed disabled. No deployment
+  is performed here. Physical Android Gallery verification remains a follow-up
+  after the user deploys this change.

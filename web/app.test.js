@@ -456,15 +456,210 @@ describe("Orb frontend", () => {
       arrayBuffer: () => Promise.reject(new DOMException("denied", "NotReadableError")),
     });
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    vi.useFakeTimers();
     document.getElementById("decode-btn").click();
-    await flush();
+    await vi.advanceTimersByTimeAsync(1100);
 
     expect(inspectCalls(fetchMock)).toHaveLength(0);
-    const message = document.getElementById("job-error").textContent;
-    expect(message).toContain("couldn't be accessed through the selected source");
-    expect(message).toContain("(NotReadableError)");
-    expect(message).toContain("Reference:");
+    const message = document.getElementById("upload-error").textContent;
+    expect(message).toContain("Couldn't access this video");
+    expect(message).toContain("Choose it again using Files or Browse.");
+    expect(message).not.toMatch(/NotReadableError|Reference:|No upload/);
+    expect(document.getElementById("screen-home").classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("file-card").classList.contains("hidden")).toBe(true);
     expect(info).toHaveBeenCalledWith(expect.stringContaining("precheck=unreadable"));
+  });
+
+  it.each([
+    ["decode", "clip.mp4"], ["decode", "photo.png"],
+    ["compose", "clip.mp4"], ["compose", "photo.png"],
+  ])("checks %s %s on the selection screen before making one upload", async (mode, filename) => {
+    const fetchMock = mockApi({ jobStatuses: [{ state: "processing", stage: "Analyzing image" }] });
+    await import("./app.js");
+    await flush();
+    document.getElementById(`mode-${mode}`).click();
+    chooseVideo(filename);
+    let resolveRead;
+    const file = document.getElementById("file-input").files[0];
+    const read = vi.fn(() => new Promise((resolve) => { resolveRead = resolve; }));
+    vi.spyOn(file, "slice").mockReturnValue({ arrayBuffer: read });
+    vi.useFakeTimers();
+    document.getElementById("decode-btn").click();
+    document.getElementById("decode-btn").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.getElementById("file-check-status").textContent).toBe("Checking file…");
+    expect(document.getElementById("screen-processing").classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("screen-home").classList.contains("hidden")).toBe(false);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    expect(sessionStorage.getItem("orb-active-paid-job")).toBeNull();
+    resolveRead(new ArrayBuffer(8));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+    expect(inspectCalls(fetchMock)[0][0]).toContain(`/api/orb/${mode}/file`);
+    expect(document.getElementById("file-check-status").classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("screen-processing").classList.contains("hidden")).toBe(false);
+  });
+
+  it.each(["NotReadableError", "NotFoundError"])("recovers locally from %s and makes only one POST", async (name) => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    const read = vi.fn().mockRejectedValueOnce(new DOMException("unavailable", name))
+      .mockResolvedValue(new ArrayBuffer(8));
+    vi.spyOn(document.getElementById("file-input").files[0], "slice").mockReturnValue({ arrayBuffer: read });
+    vi.useFakeTimers();
+    document.getElementById("decode-btn").click();
+    await vi.advanceTimersByTimeAsync(299);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    expect(read).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("clears a persistently unreadable image and permits fresh same-name selection", async () => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    chooseVideo("photo.png");
+    const input = document.getElementById("file-input");
+    // Simulate the picker value so clearing the failed selection is observable.
+    Object.defineProperty(input, "value", { value: "C:\\fakepath\\photo.png", writable: true, configurable: true });
+    const read = vi.fn().mockRejectedValue(new DOMException("locked", "NotReadableError"));
+    vi.spyOn(input.files[0], "slice").mockReturnValue({ arrayBuffer: read });
+    vi.useFakeTimers();
+    document.getElementById("decode-btn").click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    expect(input.value).toBe("");
+    expect(document.getElementById("decode-btn").disabled).toBe(true);
+    expect(document.getElementById("upload-error").textContent).toContain("Couldn't access this image");
+    expect(document.getElementById("upload-error").textContent).toContain("selected image available to Orb");
+    chooseVideo("photo.png");
+    vi.spyOn(input.files[0], "slice").mockReturnValue({ arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)) });
+    document.getElementById("decode-btn").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("times out a local read and never uploads after late resolution", async () => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    let resolveRead;
+    const read = vi.fn(() => new Promise((resolve) => { resolveRead = resolve; }));
+    vi.spyOn(document.getElementById("file-input").files[0], "slice").mockReturnValue({ arrayBuffer: read });
+    vi.useFakeTimers();
+    document.getElementById("decode-btn").click();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    expect(document.getElementById("file-card").classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("upload-error").textContent).toContain("Couldn't access this video");
+    resolveRead(new ArrayBuffer(8));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("never uploads a superseded File after a fresh selection succeeds", async () => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    let resolveRead;
+    vi.spyOn(document.getElementById("file-input").files[0], "slice").mockReturnValue({
+      arrayBuffer: () => new Promise((resolve) => { resolveRead = resolve; }),
+    });
+    vi.useFakeTimers();
+    document.getElementById("decode-btn").click();
+    document.getElementById("file-clear").click();
+    chooseVideo("replacement.mp4");
+    vi.spyOn(document.getElementById("file-input").files[0], "slice").mockReturnValue({
+      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+    });
+    document.getElementById("decode-btn").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+    expect(inspectCalls(fetchMock)[0][1].body.get("file").name).toBe("replacement.mp4");
+    resolveRead(new ArrayBuffer(8));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+  });
+
+  it("rejects an empty file before checking or uploading", async () => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    const input = document.getElementById("file-input");
+    const file = new File([], "empty.mp4", { type: "video/mp4" });
+    const slice = vi.spyOn(file, "slice");
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    input.dispatchEvent(new Event("change"));
+    document.getElementById("decode-btn").click();
+    await flush();
+    expect(slice).not.toHaveBeenCalled();
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    expect(document.getElementById("upload-error").textContent).toContain("empty");
+  });
+
+  it("preserves the selected File when the picker is cancelled normally", async () => {
+    mockApi();
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    document.getElementById("choose-file-btn").click();
+    document.getElementById("file-input").dispatchEvent(new Event("cancel"));
+    expect(document.getElementById("file-name").textContent).toBe("clip.mp4");
+    expect(document.getElementById("decode-btn").disabled).toBe(false);
+  });
+
+  it("makes no paid job request during local recovery, then submits one authenticated idempotent POST", async () => {
+    const address = `0x${"11".repeat(20)}`;
+    window.ethereum = { on: vi.fn(), request: vi.fn(async ({ method }) => {
+      if (method === "eth_accounts") return [];
+      if (method === "eth_requestAccounts") return [address];
+      if (method === "eth_chainId") return "0x66eee";
+      if (method === "personal_sign") return `0x${"cd".repeat(65)}`;
+      throw new Error(`Unexpected wallet method: ${method}`);
+    }) };
+    const base = mockApi({ jobStatuses: [{ state: "processing", stage: "Analyzing image" }] });
+    const fetchMock = vi.fn(async (url, options) => {
+      if (url === "/api/orb/credits/config") return response({ enabled: true, chain_id: 421614, price_wei: "1000" });
+      if (url === "/api/health") return response({ status: "ok", orb_ai_access: "credits" });
+      if (url === "/api/orb/wallet/challenge") return response({ nonce: "nonce", message: "Sign in to Orb" });
+      if (url === "/api/orb/wallet/sign-in") return response({ wallet: address, token: "signed-session",
+        expires_at: Math.floor(Date.now() / 1000) + 3600 });
+      if (url === "/api/orb/credits/balance") return response({ wallet: address, available: 1 });
+      return base(url, options);
+    });
+    globalThis.fetch = fetchMock;
+    await import("./app.js");
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.getElementById("wallet-close").click();
+    chooseVideo();
+    const read = vi.fn().mockRejectedValueOnce(new DOMException("locked", "NotReadableError"))
+      .mockResolvedValue(new ArrayBuffer(8));
+    vi.spyOn(document.getElementById("file-input").files[0], "slice").mockReturnValue({ arrayBuffer: read });
+    vi.useFakeTimers();
+    document.getElementById("decode-btn").click();
+    await vi.advanceTimersByTimeAsync(299);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/jobs/"))).toHaveLength(0);
+    expect(document.getElementById("wallet-balance").textContent).toContain("1 testnet credit");
+    expect(sessionStorage.getItem("orb-active-paid-job")).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    const uploads = inspectCalls(fetchMock);
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0][1].headers.Authorization).toBe("Bearer signed-session");
+    const key = uploads[0][1].headers["X-Orb-Idempotency-Key"];
+    expect(key).toBeTruthy();
+    expect(uploads[0][0]).toContain(`upload_attempt_id=${key}`);
   });
 
   it("returns to the upload screen from results", async () => {

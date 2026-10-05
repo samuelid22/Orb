@@ -2,6 +2,7 @@
 
 import { apiUrl } from "./api-url.js";
 import { initWallet } from "./wallet.js";
+import { checkFileReadable } from "./file-readability.js";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -31,6 +32,7 @@ const els = {
   fileCard: document.getElementById("file-card"),
   fileName: document.getElementById("file-name"),
   fileMeta: document.getElementById("file-meta"),
+  fileCheckStatus: document.getElementById("file-check-status"),
   fileClear: document.getElementById("file-clear"),
   serviceStatus: document.getElementById("service-status"),
   enhanceStatus: document.getElementById("enhance-status"),
@@ -91,6 +93,7 @@ const decodeLabel = els.decodeBtn.querySelector("span");
 const decodeDetail = els.decodeBtn.querySelector("small");
 
 let selectedFile = null;
+let fileCheckController = null;
 let currentMode = "decode";
 let activeMediaKind = null;
 let serviceReady = false;
@@ -386,6 +389,12 @@ function setFile(file) {
 }
 
 function clearFile() {
+  if (fileCheckController) {
+    fileCheckController.abort();
+    fileCheckController = null;
+    actionBusy = false;
+    setFileChecking(false);
+  }
   selectedFile = null;
   visualAttemptKey = null;
   els.fileInput.value = "";
@@ -396,6 +405,21 @@ function clearFile() {
 }
 
 /* ---------- Visual AI flow ---------- */
+
+function setFileChecking(checking) {
+  els.fileCheckStatus.textContent = checking ? "Checking file…" : "";
+  els.fileCheckStatus.classList.toggle("hidden", !checking);
+  els.fileCard.setAttribute("aria-busy", String(checking));
+}
+
+function showFileReadFailure(kind) {
+  const title = document.createElement("strong");
+  title.textContent = `Couldn't access this ${kind}`;
+  const body = document.createElement("p");
+  body.textContent = `Your device didn't make the selected ${kind} available to Orb. Choose it again using Files or Browse.`;
+  els.uploadError.replaceChildren(title, body);
+  els.uploadError.classList.remove("hidden");
+}
 
 function mapStage(stage) {
   if (!stage || stage === "Queued") return { step: "uploading", label: "Preparing Orb…", detail: "Your request is in line." };
@@ -434,14 +458,41 @@ function renderSteps(activeStep, uploadDone) {
 
 async function startVisual() {
   if (!selectedFile || actionBusy || !serviceReady || (creditMode === "credits" && !wallet.hasCredit())) return;
-  activeMediaKind = /\.(png|jpe?g|webp)$/i.test(selectedFile.name) ? "image" : "video";
+  const file = selectedFile;
+  const operation = currentMode;
+  activeMediaKind = /\.(png|jpe?g|webp)$/i.test(file.name) ? "image" : "video";
+  const mediaKind = activeMediaKind;
+  const controller = new AbortController();
+  fileCheckController = controller;
   actionBusy = true;
+  els.uploadError.classList.add("hidden");
+  setFileChecking(true);
   syncDecodeButton();
-  if (!await isServiceReady()) {
-    actionBusy = false;
-    syncDecodeButton();
+  const attemptId = visualAttemptKey || createUploadAttemptId();
+  visualAttemptKey = attemptId;
+  try {
+    await checkFileReadable(file, { signal: controller.signal });
+  } catch (error) {
+    if (fileCheckController !== controller || controller.signal.aborted) return;
+    console.info(`upload_attempt=${attemptId} precheck=unreadable error=${error?.name || "UnknownError"}`);
+    clearFile();
+    showFileReadFailure(mediaKind);
     return;
   }
+  // Cleared/replaced selections and late reads must never submit a request.
+  if (fileCheckController !== controller || controller.signal.aborted || selectedFile !== file || currentMode !== operation) return;
+  setFileChecking(false);
+  if (!await isServiceReady()) {
+    if (fileCheckController === controller) {
+      fileCheckController = null;
+      actionBusy = false;
+      syncDecodeButton();
+    }
+    return;
+  }
+  if (fileCheckController !== controller || controller.signal.aborted || selectedFile !== file || currentMode !== operation) return;
+  fileCheckController = null;
+  console.info(`upload_attempt=${attemptId} precheck=readable`);
 
   clearTimeout(pollTimer);
   currentJobId = null;
@@ -457,8 +508,6 @@ async function startVisual() {
   els.phaseText.textContent = activeMediaKind === "video" ? "Uploading video…" : "Uploading image…";
   els.phaseDetail.textContent = "Sending your reference to Orb.";
 
-  const attemptId = visualAttemptKey || createUploadAttemptId();
-  visualAttemptKey = attemptId;
   const fail = (message) => {
     actionBusy = false;
     els.uploadProgress.classList.remove("is-indeterminate");
@@ -467,31 +516,8 @@ async function startVisual() {
     syncDecodeButton();
   };
 
-  // Reliability pre-check: prove the first bytes are readable before the
-  // body is streamed. A pass does not guarantee the whole file uploads.
-  let precheck = "skipped";
-  let precheckErrorName = "";
-  try {
-    const probe = selectedFile.slice(0, 64 * 1024);
-    if (typeof probe.arrayBuffer === "function") {
-      await probe.arrayBuffer();
-      precheck = "readable";
-    }
-  } catch (error) {
-    precheck = "unreadable";
-    precheckErrorName = error?.name || "UnknownError";
-  }
-  console.info(`upload_attempt=${attemptId} precheck=${precheck}`);
-  if (precheck === "unreadable") {
-    const reason = precheckErrorName === "NotReadableError" || precheckErrorName === "NotFoundError"
-      ? "This file couldn't be accessed through the selected source. Please select it again using Files or Browse instead of Gallery."
-      : "The selected file could not be read from this device before upload.";
-    fail(`${reason} (${precheckErrorName}) No upload was started and no retry was made. Reference: ${attemptId}.`);
-    return;
-  }
-
   const form = new FormData();
-  form.append("file", selectedFile);
+  form.append("file", file);
   let response;
   try {
     // The same-origin Vite proxy keeps the upload path and its canary intact.

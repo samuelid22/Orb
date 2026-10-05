@@ -841,7 +841,7 @@ async function loadPrivateMedia(result) {
 
 /* ---------- Wiring ---------- */
 
-// The label and its directly tappable file input activate the picker natively.
+// The real file input covers the visible control and activates the picker natively.
 // Do not synthesize a second click or cross an async boundary here.
 ["dragover", "dragenter"].forEach((name) =>
   els.dropzone.addEventListener(name, (event) => {

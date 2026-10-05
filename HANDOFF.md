@@ -1209,3 +1209,40 @@ a temporary process-only model override described below.
   after validation; production automatic Git deployments were previously
   confirmed disabled. No deployment is performed in this pass. Secrets and
   runtime files, including the local QA screenshot, are excluded from the commit.
+
+## 2026-10-05 Direct native file-picker activation
+
+- Physical Zerion Android feedback confirmed quantity controls and general
+  wallet/page interaction now work, but Choose File still did not open a picker.
+  This follow-up changes only the file-control markup/styles and related tests.
+- Removed the wrapping label and its forwarding path. A non-interactive relative
+  wrapper contains visual text with pointer-events disabled and the real file
+  input positioned over its entire area (inset 0, width/height 100%, opacity 0,
+  z-index 1, pointer-events auto). The input remains focusable, screen-reader
+  labelled, and neither display:none nor visibility:hidden. No synthetic click,
+  async activation, duplicate touch handler or wallet-specific detection exists.
+- Accepted formats, absence of capture, file change handling, Decode/Compose,
+  readability preflight, cancellation, same-file reset and paid/idempotent upload
+  behaviour remain unchanged. Quantity, wallet/payment, MetaMask gas, backend,
+  AI, database, blockchain and infrastructure code were not modified.
+- Local Chromium checks of the guarded build confirmed all five sampled hit
+  points across the control target file-input at 1280px, 390px and 320px; input
+  bounds equal the visual wrapper bounds. Direct click and Enter opened native
+  file-chooser events, click counts were one, and mobile widths had no horizontal
+  overflow. Checks used an isolated local mock API without real AI/payment or
+  production access; local test servers were stopped afterward.
+- Physical Zerion Android must be retested after a user-authorized deployment.
+  If direct native input activation still fails there, the remaining problem is
+  likely Zerion's embedded WebView/native file-chooser implementation. Normal
+  website JavaScript cannot reliably repair a host app that does not present
+  the chooser. This change does not promise to force a particular Android
+  picker/provider. Original Prometheus remains untouched.
+- Full frontend: 127 passed. Full backend: 274 passed, 8 opt-in real-Postgres
+  tests skipped, 114 existing FastAPI deprecation warnings. Guarded production
+  build passed using https://orb-api.example.invalid. Focused tests verify the
+  input's active overlay, no wrapper/label/programmatic activation, a single
+  native click path, cancellation, same-name reset, image/video Decode/Compose
+  and no duplicate media uploads. Existing wallet/payment/readability suites
+  remain passing. User authorized commit/push to main after validation; automatic
+  production Git deployments were previously confirmed disabled. No deployment
+  is performed here; secrets/runtime data and the QA screenshot remain excluded.

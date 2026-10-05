@@ -354,9 +354,9 @@ button { font: inherit; }
 .choose-file-btn:hover { background: var(--blue-deep); }
 .choose-file-btn:active { transform: translateY(1px); }
 .choose-file-btn:focus-within { outline: 3px solid var(--blue-deep); outline-offset: 3px; }
-/* Keep the native input focusable and directly tappable within this control.
-   It also works when an embedded browser does not forward label activation. */
-.file-picker-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+/* Only the real input receives taps; no label forwarding or synthetic click. */
+.choose-file-content { pointer-events: none; }
+.file-picker-input { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; pointer-events: auto; cursor: pointer; }
 
 .mode-pills {
   display: grid;

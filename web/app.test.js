@@ -326,7 +326,7 @@ describe("Orb frontend", () => {
     const input = document.getElementById("file-input");
     const filePicker = vi.fn();
     input.addEventListener("click", filePicker);
-    document.getElementById("choose-file-btn").click();
+    input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(filePicker).toHaveBeenCalledTimes(1);
 
     const toggle = document.getElementById("menu-toggle");
@@ -369,14 +369,15 @@ describe("Orb frontend", () => {
     expect(document.getElementById("about-panel").classList.contains("hidden")).toBe(true);
   });
 
-  it.each(["label", "input"])("activates the native file input once through the %s without a synthetic picker click", async (target) => {
+  it.each(["click", "keyboard"])("keeps one direct native-input activation path (%s)", async (activation) => {
     const fetchMock = mockApi();
     await import("./app.js");
     await flush();
-    const label = document.getElementById("choose-file-btn");
+    const wrapper = document.getElementById("choose-file-btn");
     const input = document.getElementById("file-input");
-    expect(label.tagName).toBe("LABEL");
-    expect(label.control).toBe(input);
+    expect(wrapper.tagName).toBe("DIV");
+    expect(wrapper.querySelector('input[type="file"]')).toBe(input);
+    expect(document.querySelector('label[for="file-input"]')).toBeNull();
     expect(input.hidden).toBe(false);
     expect(input.tabIndex).toBe(0);
     expect(input.hasAttribute("capture")).toBe(false);
@@ -384,13 +385,14 @@ describe("Orb frontend", () => {
     const activations = vi.fn();
     input.addEventListener("click", activations);
     const syntheticClick = vi.spyOn(input, "click");
-    if (target === "label") {
-      label.click();
-      expect(syntheticClick).not.toHaveBeenCalled(); // The browser forwards the label activation.
-    } else {
-      input.click(); // Direct native-input fallback; no label handler opens it again.
-      expect(syntheticClick).toHaveBeenCalledTimes(1);
+    if (activation === "keyboard") {
+      const key = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      input.dispatchEvent(key);
+      expect(key.defaultPrevented).toBe(false); // Native file input handles keyboard activation.
     }
+    // jsdom does not implement the OS picker; model its native click event.
+    input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(syntheticClick).not.toHaveBeenCalled();
     expect(activations).toHaveBeenCalledTimes(1);
     expect(inspectCalls(fetchMock)).toHaveLength(0);
     input.dispatchEvent(new Event("cancel"));
@@ -407,7 +409,7 @@ describe("Orb frontend", () => {
     const input = document.getElementById("file-input");
     const name = `reference.${extension}`;
     const select = () => {
-      document.getElementById("choose-file-btn").click();
+      input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       Object.defineProperty(input, "files", { value: [new File(["media"], name,
         { type: extension === "png" ? "image/png" : "video/mp4" })], configurable: true });
       input.dispatchEvent(new Event("change"));
@@ -437,10 +439,30 @@ describe("Orb frontend", () => {
     expect(getComputedStyle(input).position).toBe("absolute");
     expect(getComputedStyle(input).opacity).toBe("0");
     expect(getComputedStyle(input).display).not.toBe("none");
+    expect(getComputedStyle(input).visibility).toBe("visible");
+    expect(getComputedStyle(input).pointerEvents).toBe("auto");
+    expect(getComputedStyle(input).zIndex).toBe("1");
+    expect(getComputedStyle(input).width).toBe("100%");
+    expect(getComputedStyle(input).height).toBe("100%");
+    expect(getComputedStyle(document.querySelector(".choose-file-content")).pointerEvents).toBe("none");
     expect(css).toMatch(/\.choose-file-btn:focus-within\s*\{[^}]*outline:/);
     expect(getComputedStyle(document.querySelector("#wallet-panel .about-head")).position).toBe("sticky");
     expect(document.querySelector("#wallet-panel .about-head #wallet-close")).not.toBeNull();
     expect(getComputedStyle(document.querySelector("#credit-count button")).minHeight).toBe("44px");
+  });
+
+  it("has no wrapper activation or programmatic file-input click in application code", async () => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    const input = document.getElementById("file-input");
+    const activations = vi.fn();
+    input.addEventListener("click", activations);
+    document.getElementById("choose-file-btn").click();
+    expect(activations).not.toHaveBeenCalled(); // A physical tap must land on the overlaid input.
+    const source = readFileSync(resolve(process.cwd(), "web/app.js"), "utf8");
+    expect(source).not.toMatch(/(?:fileInput|file-input)[^\n]*\.click\s*\(/);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
   });
 
   it("keeps Decode disabled until the service passes health, ready, and the upload canary", async () => {
@@ -686,7 +708,7 @@ describe("Orb frontend", () => {
     await import("./app.js");
     await flush();
     chooseVideo();
-    document.getElementById("choose-file-btn").click();
+    document.getElementById("file-input").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     document.getElementById("file-input").dispatchEvent(new Event("cancel"));
     expect(document.getElementById("file-name").textContent).toBe("clip.mp4");
     expect(document.getElementById("decode-btn").disabled).toBe(false);

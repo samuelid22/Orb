@@ -29,6 +29,8 @@ export function initWallet({ onBalance }) {
   const buyButton = el("wallet-buy");
   const retryButton = el("wallet-retry");
   const count = el("credit-count");
+  const quantities = [...count.querySelectorAll('[role="radio"]')];
+  const creditCount = () => count.querySelector('[aria-checked="true"]').dataset.credits;
   let config = null;
   let configState = "loading";
   let configTask = null;
@@ -268,10 +270,10 @@ export function initWallet({ onBalance }) {
       el("credit-price").textContent = quote
         ? `${quote.credits} credits · ${formatUsdg(quote.amount_base_units)} test USDG. Quote expires in 15 minutes.`
         : methodConfig?.price_base_units
-          ? `${count.value} credit${count.value === "1" ? "" : "s"} · ${formatUsdg(BigInt(methodConfig.price_base_units) * BigInt(count.value))} test USDG. Final price confirmed by server quote; ETH is needed for gas.`
+          ? `${creditCount()} credit${creditCount() === "1" ? "" : "s"} · ${formatUsdg(BigInt(methodConfig.price_base_units) * BigInt(creditCount()))} test USDG. Final price confirmed by server quote; ETH is needed for gas.`
           : "Get a server quote for the exact test USDG price. Arbitrum Sepolia ETH is needed for gas.";
     } else if (methodConfig) {
-      el("credit-price").textContent = `${formatTestnetEth(BigInt(methodConfig.price_wei) * BigInt(count.value))} testnet ETH for ${count.value} credit${count.value === "1" ? "" : "s"} (plus gas). Quote expires in 15 minutes.`;
+      el("credit-price").textContent = `${formatTestnetEth(BigInt(methodConfig.price_wei) * BigInt(creditCount()))} testnet ETH for ${creditCount()} credit${creditCount() === "1" ? "" : "s"} (plus gas). Quote expires in 15 minutes.`;
     }
   }
 
@@ -446,7 +448,7 @@ export function initWallet({ onBalance }) {
       epoch = authEpoch;
       const quote = await json("/api/orb/credits/quotes", { method: "POST",
         headers: { "Content-Type": "application/json", ...headers() },
-        body: JSON.stringify({ credits: Number(count.value), payment_method: payingMethod }) });
+        body: JSON.stringify({ credits: Number(creditCount()), payment_method: payingMethod }) });
       if (quote.chain_id !== CHAIN_ID) throw new Error("Server quote has the wrong chain.");
       if (epoch !== authEpoch || !verified) throw new Error("Wallet changed. Sign again before buying credits.");
       if (quote.expires_at && quote.expires_at <= Date.now() / 1000) throw new Error("Payment quote expired. Request a new quote.");
@@ -547,7 +549,27 @@ export function initWallet({ onBalance }) {
   });
   buyButton.addEventListener("click", () => void buy());
   retryButton.addEventListener("click", () => void verifyPending());
-  count.addEventListener("change", () => showPrice());
+  function selectQuantity(selected) {
+    for (const button of quantities) {
+      button.setAttribute("aria-checked", String(button === selected));
+      button.tabIndex = button === selected ? 0 : -1;
+    }
+    showPrice();
+  }
+  quantities.forEach((button, index) => {
+    button.addEventListener("click", () => selectQuantity(button));
+    button.addEventListener("keydown", (event) => {
+      let next;
+      if (["ArrowRight", "ArrowDown"].includes(event.key)) next = (index + 1) % quantities.length;
+      else if (["ArrowLeft", "ArrowUp"].includes(event.key)) next = (index + quantities.length - 1) % quantities.length;
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = quantities.length - 1;
+      else return; // Space/Enter retain the button's native click activation.
+      event.preventDefault();
+      selectQuantity(quantities[next]);
+      quantities[next].focus();
+    });
+  });
   window.ethereum?.on?.("accountsChanged", (accounts) => {
     if (disconnected) return;
     const next = accounts?.[0] || null;

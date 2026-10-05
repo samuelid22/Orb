@@ -1166,3 +1166,46 @@ a temporary process-only model override described below.
   production Git deployments were previously confirmed disabled. No deployment
   is performed here. Physical Android Gallery verification remains a follow-up
   after the user deploys this change.
+
+## 2026-10-05 Mobile wallet browser control compatibility
+
+- Replaced the native credit quantity select with compact HTML button radios
+  for 1/3/5 credits, defaulting to 1. The labelled radio group exposes checked
+  state, a single Tab stop, arrow-key wrapping and Home/End navigation. Native
+  button Space/Enter activation is preserved; no touch-specific handlers or
+  wallet/browser detection were added. Quantity remains usable during wallet
+  activity and survives payment-method switching. Existing integer pricing and
+  server-authoritative quote/transaction construction are unchanged.
+- Choose File is now an associated label containing the actual native file
+  input. The transparent input covers only the visible Choose File control,
+  remains keyboard/screen-reader accessible, and accepts direct taps as a
+  fallback for browsers that do not forward label activation. Removed the
+  JavaScript input.click handler, avoiding duplicate picker activation or an
+  async boundary. Accepted media types, absence of capture, change handling,
+  readability preflight, cancellation and same-file reset behaviour remain.
+- Wallet & Credits keeps its existing fixed panel and desktop appearance; its
+  heading/close control now sticks while the panel scrolls. No backdrop or
+  modal architecture was introduced.
+- Full frontend: 126 passed (16 added cases); full backend: 274 passed,
+  8 opt-in real-Postgres tests skipped, 114 existing FastAPI deprecation
+  warnings. Guarded production build passed with https://orb-api.example.invalid.
+  Tests cover accessible selection, keyboard navigation, all native/USDG
+  quantities and exact unchanged transaction fields, selection during/after
+  payment, label/direct input single activation, cancellation, same-name reset,
+  image/video Decode/Compose and single-upload submission. Existing readability,
+  authentication, payment/idempotency and paid-job recovery tests still pass.
+- Also checked the built frontend in a local Chromium browser with in-memory
+  mocked wallet/API responses and all real transactions blocked. Native pointer
+  and Enter activation emitted file-chooser events. Keyboard quantity selection
+  and method switching worked. At 390px and 320px there was no horizontal page
+  overflow; the wallet close control remained hit-testable after panel scrolling.
+  Physical Zerion Android, MetaMask, Rabby, Chrome Android and Edge checks remain
+  manual follow-ups: web code cannot guarantee a host app presents its chooser
+  or releases a native overlay. No live AI, payments or production API/DB calls
+  occurred. The local mock server was stopped after verification.
+- No backend, authentication protocol, pricing, ETH/USDG verification,
+  persistence, AI, MetaMask gas behaviour or infrastructure code changed.
+  Original Prometheus remains untouched. User authorized commit/push on main
+  after validation; production automatic Git deployments were previously
+  confirmed disabled. No deployment is performed in this pass. Secrets and
+  runtime files, including the local QA screenshot, are excluded from the commit.

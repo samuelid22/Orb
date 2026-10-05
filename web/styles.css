@@ -238,6 +238,7 @@ button { font: inherit; }
 .about-testnet { margin-top: 20px !important; padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px !important; }
 
 .wallet-panel { width: min(460px, calc(100vw - 32px)); }
+.wallet-panel .about-head { position: sticky; top: -22px; z-index: 1; background: var(--white); }
 .wallet-panel .testnet-callout {
   padding: 12px 14px;
   border: 1px solid var(--border);
@@ -249,13 +250,15 @@ button { font: inherit; }
 .wallet-balance { margin: 10px 0 16px; font-size: 18px; font-weight: 750; }
 .wallet-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .wallet-purchase { display: grid; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
-.wallet-purchase label { font-weight: 700; }
+.wallet-purchase #credit-count-label { font-weight: 700; }
+.credit-quantity { display: flex; gap: 8px; }
+.credit-quantity button { flex: 1; min-width: 0; min-height: 44px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: white; color: var(--navy); font: inherit; cursor: pointer; }
+.credit-quantity button[aria-checked="true"] { background: var(--blue-pale); color: var(--blue-deep); border-color: var(--blue); font-weight: 700; }
 .payment-method-options { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .payment-method-options button { flex: 1; min-height: 42px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; color: var(--navy); background: white; font: inherit; cursor: pointer; }
 .payment-method-options button[aria-pressed="true"] { color: var(--blue); background: var(--light-blue, #eaf4ff); border-color: var(--blue); font-weight: 700; }
 .payment-method-options button:disabled { opacity: .65; cursor: default; }
-.wallet-purchase select { width: 100%; min-height: 42px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: white; color: var(--navy); }
-.wallet-panel button:focus-visible, .wallet-purchase select:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.wallet-panel button:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 .testnet-note { margin: 16px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 
 /* Home */
@@ -331,6 +334,9 @@ button { font: inherit; }
 .dz-text small { margin-top: 3px; color: var(--muted); font-size: 13px; }
 
 .choose-file-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
   width: 100%;
   min-height: 76px;
   margin-top: 10px;
@@ -347,6 +353,10 @@ button { font: inherit; }
 
 .choose-file-btn:hover { background: var(--blue-deep); }
 .choose-file-btn:active { transform: translateY(1px); }
+.choose-file-btn:focus-within { outline: 3px solid var(--blue-deep); outline-offset: 3px; }
+/* Keep the native input focusable and directly tappable within this control.
+   It also works when an embedded browser does not forward label activation. */
+.file-picker-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 
 .mode-pills {
   display: grid;

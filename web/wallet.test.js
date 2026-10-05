@@ -103,6 +103,10 @@ function renderWallet() {
   return initWallet({ onBalance: vi.fn() });
 }
 
+function selectCredits(credits) {
+  document.querySelector(`#credit-count [data-credits="${credits}"]`).click();
+}
+
 describe("Orb wallet authentication UI", () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -336,10 +340,109 @@ describe("Orb wallet authentication UI", () => {
     renderWallet();
     await flush();
     document.querySelector('[data-method="usdg"]').click();
-    const count = document.getElementById("credit-count");
-    count.value = String(credits);
-    count.dispatchEvent(new Event("change"));
+    selectCredits(credits);
     expect(document.getElementById("credit-price").textContent).toContain(`${credits} credit${credits === 1 ? "" : "s"} · ${amount} test USDG`);
+  });
+
+  it("defaults to one accessible radio and keeps quantity through wallet and method changes", async () => {
+    setup({ dual: true });
+    renderWallet();
+    await flush();
+    const group = document.getElementById("credit-count");
+    const radios = [...group.querySelectorAll('[role="radio"]')];
+    expect(group.tagName).toBe("DIV");
+    expect(group.getAttribute("role")).toBe("radiogroup");
+    expect(document.getElementById(group.getAttribute("aria-labelledby")).textContent).toBe("Buy testnet credits");
+    expect(radios.map((button) => button.dataset.credits)).toEqual(["1", "3", "5"]);
+    expect(radios.map((button) => button.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+    expect(radios.map((button) => button.tabIndex)).toEqual([0, -1, -1]);
+    selectCredits(3);
+    document.getElementById("wallet-connect").click();
+    await flush();
+    for (const method of ["usdg", "native_eth", "usdg"]) {
+      document.querySelector(`[data-method="${method}"]`).click();
+      expect(group.querySelector('[aria-checked="true"]').dataset.credits).toBe("3");
+      expect(document.getElementById("credit-price").textContent).toContain("3 credits");
+    }
+    expect(radios.every((button) => !button.disabled)).toBe(true);
+  });
+
+  it("supports arrow, Home and End keys with one selected radio and one Tab stop", async () => {
+    setup({ dual: true });
+    renderWallet();
+    await flush();
+    const radios = [...document.querySelectorAll('#credit-count [role="radio"]')];
+    for (const [key, expected] of [["ArrowRight", "3"], ["ArrowDown", "5"], ["ArrowRight", "1"],
+      ["ArrowLeft", "5"], ["ArrowUp", "3"], ["Home", "1"], ["End", "5"]]) {
+      const current = radios.find((button) => button.getAttribute("aria-checked") === "true");
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      current.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      const selected = radios.filter((button) => button.getAttribute("aria-checked") === "true");
+      expect(selected).toHaveLength(1);
+      expect(selected[0].dataset.credits).toBe(expected);
+      expect(selected[0].focus).toHaveBeenCalled();
+      expect(radios.filter((button) => button.tabIndex === 0)).toEqual(selected);
+      expect(document.getElementById("credit-price").textContent).toContain(`${expected} credit`);
+    }
+    for (const key of [" ", "Enter", "Tab"]) {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      radios[2].dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(false); // Native button activation/navigation.
+    }
+  });
+
+  it.each(["native_eth", "usdg"].flatMap((method) => [1, 3, 5].map((credits) => [method, credits])))
+  ("uses selected quantity for the unchanged quote and transaction (%s, %s credits)", async (method, credits) => {
+    const { provider, fetchMock } = setup({ dual: true });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.querySelector(`[data-method="${method}"]`).click();
+    selectCredits(credits);
+    document.getElementById("wallet-buy").click();
+    await flush();
+    const quotes = fetchMock.mock.calls.filter(([path]) => path === "/api/orb/credits/quotes");
+    expect(quotes).toHaveLength(1);
+    expect(JSON.parse(quotes[0][1].body)).toEqual({ credits, payment_method: method });
+    const transactions = provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction");
+    expect(transactions).toHaveLength(1);
+    expect(transactions[0][0].params[0]).toEqual(method === "usdg" ? {
+      from: firstAddress, to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
+      data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(3000n * BigInt(credits)).toString(16).padStart(64, "0")}`,
+    } : { from: firstAddress, to: `0x${"33".repeat(20)}`, value: `0x${(1000n * BigInt(credits)).toString(16)}`,
+      data: "0x4f524231" + "12".repeat(16) });
+    selectCredits(credits === 5 ? 1 : 5);
+    expect(document.querySelector('#credit-count [aria-checked="true"]').dataset.credits).toBe(credits === 5 ? "1" : "5");
+  });
+
+  it("keeps quantity usable during wallet approval without changing or repeating the submitted purchase", async () => {
+    const { provider, fetchMock } = setup({ dual: true });
+    const ordinaryRequest = provider.request.getMockImplementation();
+    let finishTransaction;
+    provider.request.mockImplementation((request) => request.method === "eth_sendTransaction"
+      ? new Promise((resolve) => { finishTransaction = resolve; }) : ordinaryRequest(request));
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    selectCredits(3);
+    document.getElementById("wallet-buy").click();
+    await flush();
+    expect(document.getElementById("wallet-buy").disabled).toBe(true);
+    expect([...document.querySelectorAll('#credit-count [role="radio"]')].every((button) => !button.disabled)).toBe(true);
+    selectCredits(5);
+    expect(document.getElementById("credit-price").textContent).toContain("5 credits");
+    document.getElementById("wallet-buy").click();
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/api/orb/credits/quotes")).toHaveLength(1);
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(1);
+    finishTransaction(`0x${"ab".repeat(32)}`);
+    await flush();
+    expect(document.getElementById("wallet-buy").disabled).toBe(false);
+    expect(document.querySelector('#credit-count [aria-checked="true"]').dataset.credits).toBe("5");
+    selectCredits(1);
+    expect(document.getElementById("credit-price").textContent).toContain("1 credit");
   });
 
   it("renders the server USDG quote and transfers tokens with zero ETH and wallet-estimated fees", async () => {
@@ -351,7 +454,7 @@ describe("Orb wallet authentication UI", () => {
     expect(document.getElementById("wallet-buy").textContent).toBe("Buy credits with USDG");
     expect(document.getElementById("wallet-testnet-notice").textContent).toContain("no monetary value");
     expect(document.getElementById("wallet-testnet-notice").textContent).toContain("ETH is still needed for gas");
-    document.getElementById("credit-count").value = "3";
+    selectCredits(3);
     document.getElementById("wallet-buy").click();
     await flush();
     expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.009 test USDG");
@@ -434,8 +537,7 @@ describe("Orb wallet authentication UI", () => {
     expect(buttons[0].getAttribute("aria-pressed")).toBe("false");
     expect(document.getElementById("wallet-testnet-notice").textContent).toContain("no monetary value");
     expect(document.getElementById("credit-price").textContent).toContain("server quote");
-    document.getElementById("credit-count").value = "3";
-    document.getElementById("credit-count").dispatchEvent(new Event("change"));
+    selectCredits(3);
     expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.009 test USDG");
     buttons[0].click();
     expect(document.getElementById("wallet-buy").textContent).toBe("Pay with testnet ETH");
@@ -449,7 +551,7 @@ describe("Orb wallet authentication UI", () => {
     document.getElementById("wallet-connect").click();
     await flush();
     document.querySelector(`[data-method="${method}"]`).click();
-    document.getElementById("credit-count").value = "3";
+    selectCredits(3);
     document.getElementById("wallet-buy").click();
     await flush();
     const quoteCall = fetchMock.mock.calls.find(([path]) => path === "/api/orb/credits/quotes");

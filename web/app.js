@@ -841,7 +841,8 @@ async function loadPrivateMedia(result) {
 
 /* ---------- Wiring ---------- */
 
-els.chooseFileBtn.addEventListener("click", () => els.fileInput.click());
+// The label and its directly tappable file input activate the picker natively.
+// Do not synthesize a second click or cross an async boundary here.
 ["dragover", "dragenter"].forEach((name) =>
   els.dropzone.addEventListener(name, (event) => {
     event.preventDefault();

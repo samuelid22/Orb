@@ -324,7 +324,8 @@ describe("Orb frontend", () => {
     await flush();
 
     const input = document.getElementById("file-input");
-    const filePicker = vi.spyOn(input, "click").mockImplementation(() => {});
+    const filePicker = vi.fn();
+    input.addEventListener("click", filePicker);
     document.getElementById("choose-file-btn").click();
     expect(filePicker).toHaveBeenCalledTimes(1);
 
@@ -366,6 +367,80 @@ describe("Orb frontend", () => {
     expect(document.getElementById("about-panel").textContent).toContain("Create · realize");
     document.getElementById("about-close").click();
     expect(document.getElementById("about-panel").classList.contains("hidden")).toBe(true);
+  });
+
+  it.each(["label", "input"])("activates the native file input once through the %s without a synthetic picker click", async (target) => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    const label = document.getElementById("choose-file-btn");
+    const input = document.getElementById("file-input");
+    expect(label.tagName).toBe("LABEL");
+    expect(label.control).toBe(input);
+    expect(input.hidden).toBe(false);
+    expect(input.tabIndex).toBe(0);
+    expect(input.hasAttribute("capture")).toBe(false);
+    expect(input.accept).toBe("image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,video/mp4,.mp4,.m4v,.mov,.webm");
+    const activations = vi.fn();
+    input.addEventListener("click", activations);
+    const syntheticClick = vi.spyOn(input, "click");
+    if (target === "label") {
+      label.click();
+      expect(syntheticClick).not.toHaveBeenCalled(); // The browser forwards the label activation.
+    } else {
+      input.click(); // Direct native-input fallback; no label handler opens it again.
+      expect(syntheticClick).toHaveBeenCalledTimes(1);
+    }
+    expect(activations).toHaveBeenCalledTimes(1);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    input.dispatchEvent(new Event("cancel"));
+    expect(document.getElementById("file-card").classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("decode-btn").disabled).toBe(true);
+  });
+
+  it.each(["decode", "compose"].flatMap((mode) => ["png", "mp4"].map((extension) => [mode, extension])))
+  ("keeps native picker selection, reset and one upload intact (%s, %s)", async (mode, extension) => {
+    const fetchMock = mockApi();
+    await import("./app.js");
+    await flush();
+    document.getElementById(`mode-${mode}`).click();
+    const input = document.getElementById("file-input");
+    const name = `reference.${extension}`;
+    const select = () => {
+      document.getElementById("choose-file-btn").click();
+      Object.defineProperty(input, "files", { value: [new File(["media"], name,
+        { type: extension === "png" ? "image/png" : "video/mp4" })], configurable: true });
+      input.dispatchEvent(new Event("change"));
+    };
+    select();
+    expect(document.getElementById("file-name").textContent).toBe(name);
+    expect(document.getElementById("decode-btn").disabled).toBe(false);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+    document.getElementById("file-clear").click();
+    expect(input.value).toBe("");
+    expect(document.getElementById("file-card").classList.contains("hidden")).toBe(true);
+    select(); // Fresh selection with exactly the same name after reset.
+    const submit = document.getElementById("decode-btn");
+    submit.click();
+    submit.click();
+    await flush();
+    expect(inspectCalls(fetchMock)).toHaveLength(1);
+    expect(inspectCalls(fetchMock)[0][0]).toContain(`/api/orb/${mode}/file`);
+    expect(inspectCalls(fetchMock)[0][1].body.get("file").name).toBe(name);
+  });
+
+  it("keeps native picker focus visible and the wallet close header sticky", () => {
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.appendChild(style);
+    const input = document.getElementById("file-input");
+    expect(getComputedStyle(input).position).toBe("absolute");
+    expect(getComputedStyle(input).opacity).toBe("0");
+    expect(getComputedStyle(input).display).not.toBe("none");
+    expect(css).toMatch(/\.choose-file-btn:focus-within\s*\{[^}]*outline:/);
+    expect(getComputedStyle(document.querySelector("#wallet-panel .about-head")).position).toBe("sticky");
+    expect(document.querySelector("#wallet-panel .about-head #wallet-close")).not.toBeNull();
+    expect(getComputedStyle(document.querySelector("#credit-count button")).minHeight).toBe("44px");
   });
 
   it("keeps Decode disabled until the service passes health, ready, and the upload canary", async () => {

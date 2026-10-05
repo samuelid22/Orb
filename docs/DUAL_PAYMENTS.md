@@ -86,9 +86,54 @@ quote determines the method: native quotes have the ORB1 binding; USDG quotes
 require their `usdg_quotes` metadata record. Client verification cannot choose
 or switch the method. A disabled method cannot be settled through another path.
 
-The wallet sends `from`, `to`, `value`, `data` only. Native target is the receiver;
-USDG target is the configured token with `transfer(receiver, amount)`. No explicit
-gas fees, approval transaction, private key, or new payment contract is added.
+The quoted `from`, `to`, `value`, and `data` stay unchanged. Native target is the
+receiver; USDG target is the configured token with `transfer(receiver, amount)`
+and zero native value. No approval transaction, private key, or new payment
+contract is added.
+
+### Fresh transaction fees
+
+Each user-initiated purchase estimates fresh fees through the active EIP-1193
+wallet provider before requesting transaction approval. No fee cache is used.
+
+1. Confirm Arbitrum Sepolia and the authenticated account.
+2. Read `eth_getBlockByNumber("pending", false)`, falling back to `latest` if
+   pending is unsupported or has no valid positive base fee.
+3. Prefer `eth_maxPriorityFeePerGas`. If unavailable/malformed, use the median
+   of three recent blocks' 50th-percentile rewards from `eth_feeHistory`. Last
+   fallback is current `eth_gasPrice - baseFeePerGas`, only if nonnegative.
+   Zero tips are accepted from actual network data. Tips greater than the base
+   fee are rejected as excessive; no static gwei fallback or arbitrary tip is
+   substituted.
+4. Validate with `eth_estimateGas` using exactly the quoted transaction,
+   including native quote-binding data or USDG transfer calldata. Require a
+   valid positive estimate, but leave the gas limit to the wallet. Arbitrum's
+   execution and data-posting estimate can change while approval is pending;
+   do not assume 21,000 gas. See [Arbitrum gas estimation](https://docs.arbitrum.io/arbitrum-essentials/how-to-estimate-gas).
+5. Refresh the base fee after estimation, then set (all arithmetic is BigInt):
+   `maxFeePerGas = ceil(baseFeePerGas * 3 / 2) + maxPriorityFeePerGas`.
+   This gives 50% base-fee headroom without blindly doubling it. Tests cover
+   integer rounding, large quantities, fresh rising base fees, and 49% base
+   growth. It is a bounded approval cushion, not a guarantee against unlimited
+   delay/congestion. The tip bound keeps the cap at most 2.5 times the current
+   base fee (plus integer rounding). This cap is a maximum, not the amount
+   necessarily charged; see [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559).
+6. Recheck account/network, authentication epoch, provider identity and quote
+   expiry. Submit once with the two EIP-1559 fields; omit `gasPrice`, `gas`, and
+   `nonce`. The wallet still presents approval and selects the gas limit.
+
+Read RPCs have an eight-second timeout and the entire estimate a 30-second
+deadline. Unsupported/malformed read sources may fall back; wallet rejection,
+disconnect, or changed identity stops the attempt. Missing robust estimates
+show “Orb couldn't obtain a fresh network fee estimate. Please retry Buy
+Credits.” There is no static-fee fallback and no automatic transaction resend.
+An ambiguous submission without a valid hash cannot trigger verification or
+credit grant: inspect wallet activity before another manual attempt. Payment
+verification and shared ledger idempotency remain unchanged.
+
+Validation uses deterministic mocked providers; a real wallet/testnet approval
+must be checked separately after an authorized deployment. No live transaction
+is sent by automated validation.
 
 ## Verification, replay, and settlement
 

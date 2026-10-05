@@ -1246,3 +1246,47 @@ a temporary process-only model override described below.
   remain passing. User authorized commit/push to main after validation; automatic
   production Git deployments were previously confirmed disabled. No deployment
   is performed here; secrets/runtime data and the QA screenshot remain excluded.
+
+## 2026-10-05 Fresh Arbitrum Sepolia EIP-1559 fee estimation
+
+- User reported wallet-selected caps below the current Arbitrum Sepolia base
+  fee before a transaction hash was returned. Both native ETH and USDG need
+  native ETH gas. This change is frontend-only and wallet-agnostic.
+- Added web/payment-fees.js: fresh EIP-1193 reads on every Buy Credits attempt;
+  pending block base fee with latest fallback; priority suggestion from
+  eth_maxPriorityFeePerGas, then three-block feeHistory median rewards, then
+  gasPrice minus base fee. All quantities and fee arithmetic use BigInt.
+  Invalid/absent base fees fail closed. Tips above the base fee are rejected
+  as excessive rather than replacing them with an arbitrary static gwei tip.
+- The fee cap is ceil(fresh base fee * 3 / 2) + priority fee: 50% base-fee
+  headroom. Base fee is refreshed after exact-payload eth_estimateGas. The
+  wallet controls the gas limit; no gasPrice, gas, or nonce is supplied.
+  Tests cover rounding, quantities beyond Number precision and 49% base-fee
+  growth. This is a bounded cushion, not a guarantee against unlimited wallet
+  approval delays or congestion. Details and primary-source links are in
+  docs/DUAL_PAYMENTS.md; README payment guidance is updated.
+- The original quoted from/to/value/data remain unchanged for native ORB1
+  binding and USDG transfer. Before sending, recheck authenticated wallet,
+  account/chain, provider identity, auth epoch and quote expiry. Read calls
+  have 8-second timeouts and a 30-second total estimation deadline. Rejection,
+  disconnect or identity change stops the attempt; late responses cannot send.
+- Clear fee-estimation error copy replaces static-fee fallback; base-fee error
+  guidance is wallet-neutral. Diagnostic errors stay in the console. Only one
+  eth_sendTransaction is permitted per user attempt. No hash means no payment
+  verification or grant; ambiguous send errors advise inspecting wallet activity
+  before a manual retry. Existing shared replay/idempotency protections remain.
+- Added 53 deterministic frontend tests for RPC fallbacks, malformed data,
+  bounds, fresh repeated estimates, exact native/USDG payloads, identity races,
+  rejection, ambiguous sends, missing hashes and late timeout completion.
+  One asynchronous settlement assertion now waits for the actual expected
+  balance instead of relying on fixed event-loop flushes.
+- Full frontend: 180 passed. Guarded production build passed with the safe
+  https://orb-api.example.invalid API origin. Full backend: 274 passed, 8 opt-in
+  real-Postgres tests skipped, 114 existing FastAPI deprecation warnings. The
+  initial sandbox run could not access pytest's Windows temporary directory;
+  rerunning with required local filesystem access passed the complete suite.
+  Production DB/RPC/AI credentials were removed from the test process environment.
+  No live transaction, AI call or
+  deployment is performed. Physical wallet/testnet approval remains a manual
+  check after an authorized deployment. Backend, pricing, verification, database,
+  infrastructure and original Prometheus code remain unchanged.

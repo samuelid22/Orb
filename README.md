@@ -118,7 +118,7 @@ Users can:
 - **Payment assets:** native testnet ETH and optionally Paxos test USDG
 - **Credit type:** demo/test credits only
 
-The Buy Credits panel offers 1, 3, or 5 credits. The default price is `1000000000000` wei (0.000001 testnet ETH) per credit, plus wallet-estimated gas. The server quote supplies the configured price and receiving address; the user approves every transfer in their wallet.
+The Buy Credits panel offers 1, 3, or 5 credits. The default price is `1000000000000` wei (0.000001 testnet ETH) per credit, plus network gas. Orb obtains fresh EIP-1559 fee estimates; the wallet controls the gas limit and presents transaction approval. The server quote supplies the configured price and receiving address; the user approves every transfer in their wallet. See [payment fee policy](docs/DUAL_PAYMENTS.md#fresh-transaction-fees).
 
 When explicitly enabled with `ORB_PAYMENT_METHODS=native_eth,usdg`, Paxos test USDG uses the official Arbitrum Sepolia token and six decimals. Its configurable positive-integer price defaults to `ORB_CREDIT_PRICE_USDG_BASE_UNITS=3000`: 1/3/5 credits cost 0.003/0.009/0.015 test USDG. An explicit `100000` remains valid. Test USDG has no monetary value; Sepolia ETH is still needed for gas. Existing quotes retain their original amount if the configured price changes.
 

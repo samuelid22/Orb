@@ -1,6 +1,7 @@
 "use strict";
 
 import { apiUrl } from "./api-url.js";
+import { estimatePaymentFees } from "./payment-fees.js";
 
 const CHAIN_ID = 421614;
 const CHAIN_HEX = `0x${CHAIN_ID.toString(16)}`;
@@ -438,6 +439,7 @@ export function initWallet({ onBalance }) {
     const payingMethod = selectedMethod;
     const methodConfig = paymentMethods[payingMethod];
     let epoch = authEpoch;
+    let submissionStarted = false;
     busy = true;
     update();
     try {
@@ -466,10 +468,26 @@ export function initWallet({ onBalance }) {
         if (quote.data?.toLowerCase() !== expectedData) throw new Error("Server returned invalid USDG transfer data.");
         showPrice(quote);
       }
-      setFeedback("Confirm the Arbitrum Sepolia testnet transfer in your wallet…");
-      const txHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [{
+      const provider = window.ethereum;
+      const transaction = {
         from: payingWallet, to: quote.to, value: `0x${BigInt(quote.value_wei).toString(16)}`, data: quote.data,
-      }] });
+      };
+      const assertActive = () => {
+        if (provider !== window.ethereum || epoch !== authEpoch || !verified
+            || payingWallet.toLowerCase() !== walletAccount?.toLowerCase()) {
+          throw Object.assign(new Error("Wallet or network changed. Sign again before buying credits."), { stopFeeEstimation: true });
+        }
+        if (quote.expires_at && quote.expires_at <= Date.now() / 1000) {
+          throw Object.assign(new Error("Payment quote expired. Request a new quote."), { stopFeeEstimation: true });
+        }
+      };
+      setFeedback("Estimating current network fees…");
+      const fees = await estimatePaymentFees(provider, transaction, assertActive);
+      assertActive();
+      setFeedback("Confirm the Arbitrum Sepolia testnet transfer in your wallet…");
+      // Exactly one send per user attempt. Never automatically resend on error.
+      submissionStarted = true;
+      const txHash = await provider.request({ method: "eth_sendTransaction", params: [{ ...transaction, ...fees }] });
       if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error("Wallet did not return a valid transaction hash.");
       // Remember a submitted transfer even if the account changes while the
       // wallet approval dialog is open. Only its original wallet can verify it.
@@ -477,10 +495,11 @@ export function initWallet({ onBalance }) {
       setFeedback("Payment submitted. Verifying payment…");
       void verifyPending();
     } catch (error) {
-      const feeError = [error?.message, error?.data?.message, error?.data?.originalError?.message]
+      console.warn("[Orb payment attempt]", error?.code, error?.message, error?.cause?.message, error?.data?.message);
+      const feeError = [error?.message, error?.cause?.message, error?.data?.message, error?.data?.originalError?.message]
         .filter((message) => typeof message === "string").join(" ");
       if (/(?:max\s*fee\s*per\s*gas|maxFeePerGas).*(?:base\s*fee|baseFee)/i.test(feeError)) {
-        setFeedback("MetaMask's gas estimate fell below Arbitrum Sepolia's current base fee. Check your wallet activity before retrying Buy Credits with a fresh Market or Aggressive fee estimate. Orb did not receive a transaction hash.");
+        setFeedback("Your wallet's fee estimate was below Arbitrum Sepolia's current base fee. Check your wallet activity before retrying Buy Credits. Orb did not receive a transaction hash.");
       } else if (error?.code === 4001) setFeedback("Payment cancelled in your wallet. No new credits were charged.");
       else if (payingMethod === "usdg" && /insufficient|exceeds balance|transfer amount exceeds/i.test(feeError)
           && /token|usdg|transfer amount|balanceOf/i.test(feeError)) {
@@ -489,7 +508,9 @@ export function initWallet({ onBalance }) {
         setFeedback(payingMethod === "usdg"
           ? "Insufficient Arbitrum Sepolia ETH for gas. Add testnet ETH and try again."
           : "Insufficient Arbitrum Sepolia ETH for payment and gas. Add testnet ETH and try again.");
-      } else setFeedback(error.message || "Testnet payment was cancelled.");
+      } else setFeedback(submissionStarted
+        ? "Orb did not receive a transaction hash. Check your wallet activity before retrying Buy Credits."
+        : (error.message || "Testnet payment was cancelled."));
     }
     finally { busy = false; update(); }
   }

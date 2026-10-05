@@ -187,7 +187,7 @@ describe("Orb frontend", () => {
     expect(document.body.textContent).not.toMatch(/Gemini/i);
   });
 
-  it("uses wallet-estimated fees and a fresh quote after an under-base-fee rejection", async () => {
+  it("uses fresh network fees and a new quote only on a user retry after an under-base-fee rejection", async () => {
     const address = `0x${"11".repeat(20)}`;
     const receiver = `0x${"22".repeat(20)}`;
     const txHash = `0x${"ab".repeat(32)}`;
@@ -203,6 +203,9 @@ describe("Orb frontend", () => {
         if (method === "eth_chainId") return chain;
         if (method === "wallet_switchEthereumChain") { chain = params[0].chainId; return null; }
         if (method === "personal_sign") return `0x${"cd".repeat(65)}`;
+        if (method === "eth_getBlockByNumber") return { baseFeePerGas: feeFailure ? "0x64" : "0xc8" };
+        if (method === "eth_maxPriorityFeePerGas") return "0x2";
+        if (method === "eth_estimateGas") return "0x186a0";
         if (method === "eth_sendTransaction") {
           if (feeFailure) {
             feeFailure = false;
@@ -250,20 +253,23 @@ describe("Orb frontend", () => {
     expect(document.getElementById("header-wallet").textContent).toBe("Connected");
     document.getElementById("wallet-buy").click();
     await flush();
-    expect(document.getElementById("wallet-feedback").textContent).toContain("fresh Market or Aggressive fee estimate");
+    expect(document.getElementById("wallet-feedback").textContent).toContain("Your wallet's fee estimate was below Arbitrum Sepolia's current base fee");
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(1);
     expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/verify"))).toHaveLength(0);
     document.getElementById("wallet-buy").click();
     await flush();
     const transactions = provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction");
     expect(transactions).toHaveLength(2);
-    for (const [request] of transactions) {
+    for (const [index, [request]] of transactions.entries()) {
       expect(request.params[0]).toEqual({
         from: address, to: receiver, value: `0x${BigInt("1000000000000").toString(16)}`,
         data: "0x4f524231abcd",
+        maxFeePerGas: index === 0 ? "0x98" : "0x12e", maxPriorityFeePerGas: "0x2",
       });
     }
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/credits/quotes")).toHaveLength(2);
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_maxPriorityFeePerGas")).toHaveLength(2);
     expect(document.getElementById("wallet-balance").textContent).toContain("1 testnet credit");
     expect(document.getElementById("decode-btn").disabled).toBe(false);
     document.getElementById("wallet-close").click();

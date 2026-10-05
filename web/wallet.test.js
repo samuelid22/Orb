@@ -7,6 +7,7 @@ const html = readFileSync(resolve(process.cwd(), "web/index.html"), "utf8");
 const firstAddress = `0x${"11".repeat(20)}`;
 const secondAddress = `0x${"22".repeat(20)}`;
 const sessionKey = "orb-wallet-session";
+const expectedFees = { maxFeePerGas: "0x98", maxPriorityFeePerGas: "0x2" };
 
 function response(body, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -28,6 +29,9 @@ function setup({ account = firstAddress, balanceStatus = 200, revokeError = null
       if (method === "eth_requestAccounts") return selectedAccount ? [selectedAccount] : [];
       if (method === "eth_chainId") return "0x66eee";
       if (method === "personal_sign") return `0x${"cd".repeat(65)}`;
+      if (method === "eth_getBlockByNumber") return { baseFeePerGas: "0x64" };
+      if (method === "eth_maxPriorityFeePerGas") return "0x2";
+      if (method === "eth_estimateGas") return "0x186a0";
       if (method === "eth_sendTransaction") {
         if (paymentError) throw paymentError;
         return `0x${"ab".repeat(32)}`;
@@ -109,6 +113,7 @@ function selectCredits(credits) {
 
 describe("Orb wallet authentication UI", () => {
   beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     sessionStorage.clear();
     document.open();
     document.write(html);
@@ -409,9 +414,10 @@ describe("Orb wallet authentication UI", () => {
     const transactions = provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction");
     expect(transactions).toHaveLength(1);
     expect(transactions[0][0].params[0]).toEqual(method === "usdg" ? {
+      ...expectedFees,
       from: firstAddress, to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
       data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(3000n * BigInt(credits)).toString(16).padStart(64, "0")}`,
-    } : { from: firstAddress, to: `0x${"33".repeat(20)}`, value: `0x${(1000n * BigInt(credits)).toString(16)}`,
+    } : { ...expectedFees, from: firstAddress, to: `0x${"33".repeat(20)}`, value: `0x${(1000n * BigInt(credits)).toString(16)}`,
       data: "0x4f524231" + "12".repeat(16) });
     selectCredits(credits === 5 ? 1 : 5);
     expect(document.querySelector('#credit-count [aria-checked="true"]').dataset.credits).toBe(credits === 5 ? "1" : "5");
@@ -445,7 +451,7 @@ describe("Orb wallet authentication UI", () => {
     expect(document.getElementById("credit-price").textContent).toContain("1 credit");
   });
 
-  it("renders the server USDG quote and transfers tokens with zero ETH and wallet-estimated fees", async () => {
+  it("renders the server USDG quote and transfers tokens with zero ETH and fresh network fees", async () => {
     const { provider, fetchMock } = setup({ usdg: true });
     const wallet = renderWallet();
     await flush();
@@ -459,7 +465,7 @@ describe("Orb wallet authentication UI", () => {
     await flush();
     expect(document.getElementById("credit-price").textContent).toContain("3 credits · 0.009 test USDG");
     const [request] = provider.request.mock.calls.find(([arg]) => arg.method === "eth_sendTransaction");
-    expect(request.params[0]).toEqual({ from: firstAddress,
+    expect(request.params[0]).toEqual({ ...expectedFees, from: firstAddress,
       to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
       data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(9000n).toString(16).padStart(64, "0")}` });
     expect(wallet.hasCredit()).toBe(true);
@@ -557,11 +563,11 @@ describe("Orb wallet authentication UI", () => {
     const quoteCall = fetchMock.mock.calls.find(([path]) => path === "/api/orb/credits/quotes");
     expect(JSON.parse(quoteCall[1].body)).toEqual({ credits: 3, payment_method: method });
     const request = provider.request.mock.calls.find(([arg]) => arg.method === "eth_sendTransaction")[0];
-    expect(request.params[0]).toEqual(method === "usdg" ? { from: firstAddress,
+    expect(request.params[0]).toEqual(method === "usdg" ? { ...expectedFees, from: firstAddress,
       to: "0xFFC95faa3d63Cde504a05B567C600B78C0b41892", value: "0x0",
       data: `0xa9059cbb${"33".repeat(20).padStart(64, "0")}${(9000n).toString(16).padStart(64, "0")}` }
-      : { from: firstAddress, to: `0x${"33".repeat(20)}`, value: "0xbb8", data: "0x4f524231" + "12".repeat(16) });
-    expect(document.getElementById("wallet-balance").textContent).toContain("5 testnet credits");
+      : { ...expectedFees, from: firstAddress, to: `0x${"33".repeat(20)}`, value: "0xbb8", data: "0x4f524231" + "12".repeat(16) });
+    await vi.waitFor(() => expect(document.getElementById("wallet-balance").textContent).toContain("5 testnet credits"));
     expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();
   });
 
@@ -612,5 +618,104 @@ describe("Orb wallet authentication UI", () => {
     expect(document.getElementById("wallet-feedback").textContent).toContain(message);
     expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/verify"))).toHaveLength(0);
     expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(1);
+  });
+  it.each(["native_eth", "usdg"].flatMap((method) => ["estimate failure", "account change", "chain change", "rejection", "ambiguous send", "missing hash"]
+    .map((failure) => [method, failure])))
+  ("never sends/retries/verifies an unsafe payment (%s, %s)", async (method, failure) => {
+    const { provider, fetchMock, changeAccount } = setup({ dual: true });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.querySelector(`[data-method="${method}"]`).click();
+    const original = provider.request.getMockImplementation();
+    provider.request.mockImplementation(async (request) => {
+      if (request.method === "eth_maxPriorityFeePerGas" && failure === "rejection") {
+        throw Object.assign(new Error("User rejected wallet request"), { code: 4001 });
+      }
+      if (request.method === "eth_estimateGas") {
+        if (failure === "estimate failure") throw new Error("RPC unavailable");
+        if (failure === "account change") changeAccount(secondAddress);
+        if (failure === "chain change") provider.on.mock.calls.find(([event]) => event === "chainChanged")[1]("0x1");
+      }
+      if (request.method === "eth_sendTransaction") {
+        if (failure === "ambiguous send") throw new Error("Provider connection closed after submission");
+        if (failure === "missing hash") return null;
+      }
+      return original(request);
+    });
+    document.getElementById("wallet-buy").click();
+    document.getElementById("wallet-buy").click(); // Busy guard rejects repeated user input.
+    await flush();
+    const sends = provider.request.mock.calls.filter(([request]) => request.method === "eth_sendTransaction");
+    expect(sends).toHaveLength(["ambiguous send", "missing hash"].includes(failure) ? 1 : 0);
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/verify"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/api/orb/credits/quotes")).toHaveLength(1);
+    expect(sessionStorage.getItem("orb-sepolia-pending-payment")).toBeNull();
+    const message = document.getElementById("wallet-feedback").textContent;
+    if (failure === "estimate failure") expect(message).toContain("couldn't obtain a fresh network fee estimate");
+    if (["ambiguous send", "missing hash"].includes(failure)) expect(message).toContain("Check your wallet activity");
+    if (failure === "rejection") {
+      expect(message).toContain("Payment cancelled");
+      expect(provider.request.mock.calls.some(([arg]) => ["eth_feeHistory", "eth_gasPrice"].includes(arg.method))).toBe(false);
+    }
+  });
+
+  it.each(["native_eth", "usdg"])("recalculates fees independently for successive successful user purchases (%s)", async (method) => {
+    const { provider, fetchMock } = setup({ dual: true });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.querySelector(`[data-method="${method}"]`).click();
+    const original = provider.request.getMockImplementation();
+    let base = "0x64";
+    provider.request.mockImplementation((request) => request.method === "eth_getBlockByNumber"
+      ? Promise.resolve({ baseFeePerGas: base }) : original(request));
+    document.getElementById("wallet-buy").click();
+    await flush();
+    base = "0xc8";
+    document.getElementById("wallet-buy").click();
+    await flush();
+    const transactions = provider.request.mock.calls.filter(([request]) => request.method === "eth_sendTransaction");
+    expect(transactions).toHaveLength(2);
+    expect(transactions[0][0].params[0].maxFeePerGas).toBe("0x98");
+    expect(transactions[1][0].params[0].maxFeePerGas).toBe("0x12e");
+    for (const [request] of transactions) {
+      expect(request.params[0]).not.toHaveProperty("gasPrice");
+      expect(request.params[0]).not.toHaveProperty("gas");
+      expect(request.params[0]).not.toHaveProperty("nonce");
+    }
+    const estimates = provider.request.mock.calls.filter(([request]) => request.method === "eth_estimateGas");
+    expect(estimates).toHaveLength(2);
+    for (const [index, [request]] of estimates.entries()) {
+      const { maxFeePerGas, maxPriorityFeePerGas, ...exact } = transactions[index][0].params[0];
+      expect(request.params).toEqual([exact]);
+    }
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/verify"))).toHaveLength(2);
+    expect(document.getElementById("wallet-balance").textContent).toContain("5 testnet credits");
+  });
+
+  it.each(["native_eth", "usdg"])("cannot submit a late gas estimate after timeout (%s)", async (method) => {
+    const { provider, fetchMock } = setup({ dual: true });
+    renderWallet();
+    await flush();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    document.querySelector(`[data-method="${method}"]`).click();
+    const original = provider.request.getMockImplementation();
+    let finishEstimate;
+    provider.request.mockImplementation((request) => request.method === "eth_estimateGas"
+      ? new Promise((resolve) => { finishEstimate = resolve; }) : original(request));
+    vi.useFakeTimers();
+    document.getElementById("wallet-buy").click();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(document.getElementById("wallet-feedback").textContent).toContain("couldn't obtain a fresh network fee estimate");
+    expect(document.getElementById("wallet-buy").disabled).toBe(false);
+    finishEstimate("0x186a0");
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(provider.request.mock.calls.filter(([request]) => request.method === "eth_sendTransaction")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/verify"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([path]) => path === "/api/orb/credits/quotes")).toHaveLength(1);
   });
 });

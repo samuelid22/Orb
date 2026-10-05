@@ -1290,3 +1290,61 @@ a temporary process-only model override described below.
   deployment is performed. Physical wallet/testnet approval remains a manual
   check after an authorized deployment. Backend, pricing, verification, database,
   infrastructure and original Prometheus code remain unchanged.
+
+## 2026-10-06 Performance timing instrumentation
+
+- Added content-free monotonic observations for Orb Decode/Compose images and
+  videos, and text Enhance. This is instrumentation only: media sampling,
+  frame resolution/quality, scene thresholds, FFmpeg command arguments/timeouts,
+  prompts/models, retry policy, single-worker FIFO, payment pricing/verification,
+  wallet security, credit lifecycle, database schema and infrastructure remain
+  unchanged. The original Prometheus project and orb-demo-video are untouched.
+- prometheus/performance.py defines numeric/label allowlists, ContextVar job
+  scope, timers, SDK call/retry observations, and transparent ASGI receive timing.
+  Context is explicitly carried from the request into JobManager's existing
+  worker. JobTiming is internal only and is absent from public job/result DTOs.
+  It does not become ledger or recovery data. Logger exceptions are contained
+  within the observer and cannot change a job or credit outcome.
+- Backend events through the existing Uvicorn logger: orb_perf (arrival,
+  worker start, AI calls and retry waits), orb_perf_request (HTTP receive/parse /
+  acceptance), and orb_perf_summary (one completed/failed job summary). Random
+  request/job IDs correlate stages. No filenames, prompts, media/base64, wallet
+  identifiers/signatures, credentials or full transaction data are included.
+- Timed boundaries cover receive+multipart parsing/spooling, existing file save,
+  authorization, image/video validation, paid-file/Enhance hashing, job creation,
+  reservation, actual queue wait, worker processing, both existing FFprobes,
+  scene detection, each extraction aggregated, subprocess execution/launches,
+  local frame preparation, every SDK AI call, existing retry sleep, response
+  parsing/validation, pipeline artifacts, durable result save, settlement and
+  cleanup. Summary counts include image/video dimensions, bytes, duration,
+  scenes, scene/global/total frames, calls/retries, longest/average AI durations.
+  Dimensions are gauges so repeated probes do not double them; no-retry counts
+  are explicit zero. Nested spans must not be summed as if disjoint.
+- web/performance.js provides local/dev console timing only; production is
+  quiet unless the user sets sessionStorage orb-perf to 1 in that browser tab.
+  No infrastructure env var is needed. Browser events separate initial service
+  wake/readiness from AI click-to-result, readability/readiness, upload request,
+  job-ID availability, actual scheduled polling waits/requests and result display.
+  Same-page session recovery keeps the timer; a reload cannot recover the old
+  click timestamp. No requests, upload retries or poll intervals are added.
+- Added 13 backend and 12 frontend cases covering all modes, real local video
+  tools with mocked AI, failed jobs/uploads, queue isolation, SDK/parse retries,
+  content exclusion, unchanged payloads, credit consumption/release/idempotency,
+  signed disposable test-wallet sessions, logger failures and browser gating.
+  README validation counts and docs/PERFORMANCE_TIMING.md are updated.
+- Generated fixture: four-second 320x240 video, 144770 bytes; two FFprobes,
+  one scene, ten frames (two scene/eight global), eleven FFmpeg launches;
+  total 2831.015 ms, queue 0.993 ms, FFmpeg 1654.852 ms. AI transport was mocked:
+  its two calls / 31.997 ms must not be presented as live Gemini latency.
+  Local microbenchmark during validation measured about 10.4 microseconds per
+  timer+metric and 58.1 microseconds per AI JSON event with a NullHandler;
+  actual log-output I/O and production end-to-end overhead remain unmeasured.
+- Full frontend: 192 passed; guarded production build passed using the safe
+  https://orb-api.example.invalid origin. Full backend: 287 passed, 8 expected
+  opt-in real-Postgres skips, 134 existing FastAPI deprecation warnings across
+  the expanded suite. Final source, including zero-counter summary formatting,
+  passed complete backend/frontend validation. Opt-in real PostgreSQL tests
+  are excluded unless explicitly using a disposable DB. No paid/live AI calls,
+  actual transactions, production service/database access or deployment occurs
+  in this pass. User authorized commit/push to main after validation; automatic
+  production Git deployments were previously confirmed disabled.

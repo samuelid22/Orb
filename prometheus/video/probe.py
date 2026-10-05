@@ -7,6 +7,7 @@ from pathlib import Path
 
 from prometheus.errors import PrometheusError
 from prometheus.video.tools import VideoToolError, resolve_tool
+from prometheus.performance import metric, process_run, timed
 
 
 @dataclass
@@ -35,6 +36,7 @@ class VideoMetadata:
         return f"{self.width // a}:{self.height // a}"
 
 
+@timed("ffprobe")
 def probe_video(video_path: Path | str) -> VideoMetadata:
     path = Path(video_path).resolve()
     if not path.is_file():
@@ -48,7 +50,7 @@ def probe_video(video_path: Path | str) -> VideoMetadata:
         str(path),
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = process_run(subprocess.run, "ffprobe", cmd, capture_output=True, text=True, timeout=60)
     except FileNotFoundError as exc:
         raise VideoToolError(f"ffprobe executable not found: {cmd[0]}") from exc
     except OSError as exc:
@@ -77,6 +79,9 @@ def probe_video(video_path: Path | str) -> VideoMetadata:
         fps = 25.0
 
     nb_frames = video_stream.get("nb_frames")
+    metric("video_duration_s", duration)
+    metric("width", int(video_stream.get("width") or 0))
+    metric("height", int(video_stream.get("height") or 0))
     return VideoMetadata(
         path=str(path),
         container=fmt.get("format_name", "unknown"),

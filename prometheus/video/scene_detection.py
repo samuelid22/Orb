@@ -5,11 +5,13 @@ import subprocess
 
 from prometheus.errors import PrometheusError
 from prometheus.video.tools import VideoToolError
+from prometheus.performance import process_run, timed
 
 _CUT_RE = re.compile(r"pts_time:(\d+(?:\.\d+)?)")
 _DEDUP_WINDOW = 0.2
 
 
+@timed("scene_detection")
 def detect_scene_cuts(ffmpeg: str, video_path: str, duration: float, threshold: float) -> list[float]:
     cmd = [
         ffmpeg,
@@ -19,7 +21,7 @@ def detect_scene_cuts(ffmpeg: str, video_path: str, duration: float, threshold: 
         "-f", "null", "-",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = process_run(subprocess.run, "ffmpeg", cmd, capture_output=True, text=True, timeout=600)
     except OSError as exc:
         raise VideoToolError(f"Could not start ffmpeg executable {ffmpeg}: {exc}") from exc
     except subprocess.TimeoutExpired as exc:

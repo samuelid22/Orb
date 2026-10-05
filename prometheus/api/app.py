@@ -35,6 +35,7 @@ from prometheus.api.payments import PaymentConfig, PaymentError, PaymentPending,
 from prometheus.config import PrometheusConfig
 from prometheus.errors import PrometheusError
 from prometheus.pipeline import PrometheusPipeline
+from prometheus.performance import TimingMiddleware, current, metric, observe, stage, timed
 from prometheus.storage import prepare_run_directory, prepare_scene_directory
 from prometheus.video.probe import probe_video
 from prometheus.video.sampler import FrameSampler
@@ -230,6 +231,7 @@ def create_app(
     )
 
     app = FastAPI(title="Orb", version=__version__, docs_url="/api/docs")
+    app.add_middleware(TimingMiddleware)
     app.state.prometheus_startup_complete = False
     orb_origin = os.environ.get("ORB_PUBLIC_ORIGIN", "").rstrip("/")
     cors_origins = [orb_origin] if orb_origin else []
@@ -259,6 +261,7 @@ def create_app(
             and not request.headers.get("forwarded")
         )
 
+    @timed("authorization")
     def _authorize_ai(request: Request) -> str | None:
         """Return a paid wallet or None for explicit loopback-only testing."""
         if provider == "mock" or not _provider_is_ready(provider):
@@ -294,7 +297,8 @@ def create_app(
         if (paid["status"] == "reserved" and isinstance(saved, dict)
                 and saved.get("job_id") == job_id
                 and isinstance(saved.get("prompt"), str) and saved["prompt"].strip()):
-            credit_service.settle(job_id, True)
+            with stage("credit_settlement"):
+                credit_service.settle(job_id, True)
             paid = credit_service.paid_job(job_id)
         return saved, paid
 
@@ -359,11 +363,13 @@ def create_app(
         config.output.directory = output_root / job_id
         return config
 
+    @timed("file_hash")
     def _fingerprint_file(path: Path, operation: str) -> str:
         with path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         return hashlib.sha256(f"{operation}:{digest}".encode()).hexdigest()
 
+    @timed("credit_reservation")
     def _reserve_paid(wallet: str | None, request: Request, operation: str,
                       fingerprint: str, job: Job) -> tuple[str, bool]:
         if wallet is None:
@@ -425,6 +431,7 @@ def create_app(
         finally:
             video_path.unlink(missing_ok=True)
 
+    @timed("upload_save")
     async def _save_upload(file: UploadFile, allow_images: bool = False) -> tuple[str, Path]:
         filename = file.filename or ""
         allowed = _ALLOWED_EXTENSIONS + (_IMAGE_EXTENSIONS if allow_images else ())
@@ -451,6 +458,7 @@ def create_app(
         if size == 0:
             destination.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        metric("input_bytes", size)
         return filename, destination
 
     async def _validate_upload(destination: Path) -> None:
@@ -466,6 +474,7 @@ def create_app(
             destination.unlink(missing_ok=True)
             raise HTTPException(status_code=503, detail=f"Video validation is unavailable: {exc}")
 
+    @timed("file_validation")
     async def _validate_orb_media(destination: Path) -> dict[str, Any]:
         if destination.suffix.lower() not in _IMAGE_EXTENSIONS:
             await _validate_upload(destination)
@@ -479,6 +488,8 @@ def create_app(
                 if image.format != expected or width < 1 or height < 1 or width * height > 32_000_000:
                     raise ValueError("Image type or dimensions are invalid.")
                 image.verify()
+            metric("width", width)
+            metric("height", height)
             return {"kind": "image", "width": width, "height": height}
         except (UnidentifiedImageError, Image.DecompressionBombError, ValueError, OSError) as exc:
             destination.unlink(missing_ok=True)
@@ -696,7 +707,8 @@ def create_app(
                     "preview_url": f"/api/jobs/{job.id}/frames/{job.source_file}",
                 }
             if not public_mode:
-                shutil.copyfile(source, run_dir / job.source_file)
+                with stage("result_assembly"):
+                    shutil.copyfile(source, run_dir / job.source_file)
             else:
                 # Production retains prompt/analysis JSON in Postgres, not media.
                 if "video" in payload:
@@ -713,44 +725,55 @@ def create_app(
                             "notice": "The exact original creator prompt cannot be guaranteed." if operation == "decode" else
                             "A new prompt inspired by the reference, not its original instructions.",
                             "provider": provider})
-            credit_service.save_result(job.id, payload, output_root / job.id)
+            with stage("result_persistence"):
+                credit_service.save_result(job.id, payload, output_root / job.id)
             result_saved = True
             if wallet is not None:
-                credit_service.settle(job.id, True)
+                with stage("credit_settlement"):
+                    credit_service.settle(job.id, True)
             manager.update(job.id, run_dir=None if public_mode else run_dir, state="complete", stage="Complete")
         except Exception:
             if not result_saved:
                 shutil.rmtree(output_root / job.id, ignore_errors=True)
                 if wallet is not None:
-                    credit_service.settle(job.id, False)
+                    with stage("credit_settlement"):
+                        credit_service.settle(job.id, False)
             # A durable result remains reserved for restart reconciliation if
             # settlement itself failed. Never release a completed paid result.
             _LOG.exception("Orb %s job failed", operation)
             raise
         finally:
-            source.unlink(missing_ok=True)
-            if public_mode:
-                shutil.rmtree(output_root / job.id, ignore_errors=True)
+            with stage("cleanup"):
+                source.unlink(missing_ok=True)
+                if public_mode:
+                    shutil.rmtree(output_root / job.id, ignore_errors=True)
 
     @app.post("/api/orb/{operation}/file", status_code=202)
     async def orb_visual(operation: str, request: Request, file: UploadFile = File(...)) -> dict:
+        observe("request_parsed")
         if operation not in {"decode", "compose"}:
             raise HTTPException(status_code=404, detail="Unknown operation.")
         wallet = _authorize_ai(request)
+        metric("paid", int(wallet is not None))
         filename, destination = await _save_upload(file, allow_images=True)
         media = await _validate_orb_media(destination)
+        observe("set_operation", f"{operation}_{media['kind']}")
         job = manager.create(filename, tier=operation, source_file=f"source{destination.suffix.lower()}")
         try:
             fingerprint = _fingerprint_file(destination, operation) if wallet is not None else ""
             reserved_job_id, is_new = _reserve_paid(wallet, request, operation, fingerprint, job)
             if not is_new:
+                metric("reused")
+                if current() is not None:
+                    current().job_id = reserved_job_id
                 manager.remove(job.id)
                 destination.unlink(missing_ok=True)
                 return {"job_id": reserved_job_id}
             manager.submit(job.id, lambda: _run_orb_visual_job(job, destination, media, operation, wallet))
         except Exception:
             if wallet is not None:
-                credit_service.settle(job.id, False)
+                with stage("credit_settlement"):
+                    credit_service.settle(job.id, False)
             manager.remove(job.id)
             destination.unlink(missing_ok=True)
             raise
@@ -758,7 +781,9 @@ def create_app(
 
     @app.post("/api/orb/enhance", status_code=202)
     async def orb_enhance(request: Request, payload: dict) -> dict:
+        observe("request_parsed")
         wallet = _authorize_ai(request)
+        metric("paid", int(wallet is not None))
         prompt = payload.get("prompt") if isinstance(payload, dict) else None
         output = payload.get("output", "image") if isinstance(payload, dict) else None
         style = payload.get("style", "") if isinstance(payload, dict) else None
@@ -770,15 +795,19 @@ def create_app(
         if not isinstance(style, str) or len(style) > 80:
             raise HTTPException(status_code=422, detail="Style must be at most 80 characters.")
         job = manager.create("Text prompt", tier="enhance")
-        fingerprint = hashlib.sha256(json.dumps(
-            {"prompt": prompt.strip(), "output": output, "style": style.strip(), "detail": detail},
-            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        with stage("file_hash"):
+            fingerprint = hashlib.sha256(json.dumps(
+                {"prompt": prompt.strip(), "output": output, "style": style.strip(), "detail": detail},
+                sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         try:
             reserved_job_id, is_new = _reserve_paid(wallet, request, "enhance", fingerprint, job)
         except Exception:
             manager.remove(job.id)
             raise
         if not is_new:
+            metric("reused")
+            if current() is not None:
+                current().job_id = reserved_job_id
             manager.remove(job.id)
             return {"job_id": reserved_job_id}
 
@@ -792,16 +821,19 @@ def create_app(
                 result = {"job_id": job.id, "operation": "enhance", "original_prompt": prompt.strip(),
                           "prompt": enhanced, "output": output, "style": style.strip(), "detail": detail,
                           "provider": provider}
-                credit_service.save_result(job.id, result, output_root / job.id)
+                with stage("result_persistence"):
+                    credit_service.save_result(job.id, result, output_root / job.id)
                 result_saved = True
                 if wallet is not None:
-                    credit_service.settle(job.id, True)
+                    with stage("credit_settlement"):
+                        credit_service.settle(job.id, True)
                 manager.update(job.id, run_dir=None if public_mode else run_dir, state="complete", stage="Complete")
             except Exception:
                 if not result_saved:
                     shutil.rmtree(output_root / job.id, ignore_errors=True)
                     if wallet is not None:
-                        credit_service.settle(job.id, False)
+                        with stage("credit_settlement"):
+                            credit_service.settle(job.id, False)
                 _LOG.exception("Orb enhance job failed")
                 raise
             finally:
@@ -812,7 +844,8 @@ def create_app(
             manager.submit(job.id, run)
         except Exception:
             if wallet is not None:
-                credit_service.settle(job.id, False)
+                with stage("credit_settlement"):
+                    credit_service.settle(job.id, False)
             manager.remove(job.id)
             raise
         return {"job_id": job.id}

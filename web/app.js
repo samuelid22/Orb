@@ -3,6 +3,7 @@
 import { apiUrl } from "./api-url.js";
 import { initWallet } from "./wallet.js";
 import { checkFileReadable } from "./file-readability.js";
+import { createActionTiming } from "./performance.js";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
@@ -108,6 +109,11 @@ let enhanceAttemptKey = null;
 let creditMode = "local";
 let wallet = null;
 let privateMediaUrls = [];
+let actionTiming = null;
+function finishActionTiming(status) {
+  actionTiming?.finish(status);
+  actionTiming = null;
+}
 wallet = initWallet({ onBalance: () => { syncDecodeButton(); resumePaidJob(); } });
 
 function rememberPaidJob(jobId) {
@@ -287,6 +293,7 @@ async function pingUploadPath() {
 async function waitForService() {
   if (serviceReady) return true;
   if (serviceTask) return serviceTask;
+  const timing = createActionTiming("service_startup");
 
   serviceTask = (async () => {
     const deadline = Date.now() + SERVICE_DEADLINE_MS;
@@ -339,7 +346,10 @@ async function waitForService() {
   })();
 
   try {
-    return await serviceTask;
+    const ready = await serviceTask;
+    timing?.mark("readiness_complete");
+    timing?.finish(ready ? "complete" : "error");
+    return ready;
   } finally {
     serviceTask = null;
   }
@@ -390,6 +400,7 @@ function setFile(file) {
 
 function clearFile() {
   if (fileCheckController) {
+    finishActionTiming("cancelled");
     fileCheckController.abort();
     fileCheckController = null;
     actionBusy = false;
@@ -462,6 +473,8 @@ async function startVisual() {
   const operation = currentMode;
   activeMediaKind = /\.(png|jpe?g|webp)$/i.test(file.name) ? "image" : "video";
   const mediaKind = activeMediaKind;
+  finishActionTiming("cancelled");
+  actionTiming = createActionTiming(`${operation}_${mediaKind}`);
   const controller = new AbortController();
   fileCheckController = controller;
   actionBusy = true;
@@ -475,6 +488,7 @@ async function startVisual() {
   } catch (error) {
     if (fileCheckController !== controller || controller.signal.aborted) return;
     console.info(`upload_attempt=${attemptId} precheck=unreadable error=${error?.name || "UnknownError"}`);
+    finishActionTiming("error");
     clearFile();
     showFileReadFailure(mediaKind);
     return;
@@ -482,7 +496,9 @@ async function startVisual() {
   // Cleared/replaced selections and late reads must never submit a request.
   if (fileCheckController !== controller || controller.signal.aborted || selectedFile !== file || currentMode !== operation) return;
   setFileChecking(false);
+  actionTiming?.mark("readability_complete");
   if (!await isServiceReady()) {
+    finishActionTiming("error");
     if (fileCheckController === controller) {
       fileCheckController = null;
       actionBusy = false;
@@ -492,6 +508,7 @@ async function startVisual() {
   }
   if (fileCheckController !== controller || controller.signal.aborted || selectedFile !== file || currentMode !== operation) return;
   fileCheckController = null;
+  actionTiming?.mark("readiness_complete");
   console.info(`upload_attempt=${attemptId} precheck=readable`);
 
   clearTimeout(pollTimer);
@@ -509,6 +526,7 @@ async function startVisual() {
   els.phaseDetail.textContent = "Sending your reference to Orb.";
 
   const fail = (message) => {
+    finishActionTiming("error");
     actionBusy = false;
     els.uploadProgress.classList.remove("is-indeterminate");
     showError(els.jobError, message);
@@ -519,6 +537,7 @@ async function startVisual() {
   const form = new FormData();
   form.append("file", file);
   let response;
+  actionTiming?.mark("upload_start");
   try {
     // The same-origin Vite proxy keeps the upload path and its canary intact.
     response = await fetchWithTimeout(
@@ -539,6 +558,7 @@ async function startVisual() {
 
   els.uploadProgress.classList.remove("is-indeterminate");
   els.uploadBar.style.width = "100%";
+  actionTiming?.mark("upload_returned");
   els.uploadProgress.setAttribute("aria-valuenow", "100");
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data.job_id) {
@@ -546,6 +566,7 @@ async function startVisual() {
     return;
   }
   currentJobId = data.job_id;
+  actionTiming?.mark("job_available");
   rememberPaidJob(currentJobId);
   selectedFile = null;
   clearFile();
@@ -556,15 +577,19 @@ async function startEnhance() {
   const prompt = els.promptInput.value.trim();
   if (currentMode !== "enhance" || prompt.length < 3 || !serviceReady || actionBusy
       || (creditMode === "credits" && !wallet.hasCredit())) return;
+  finishActionTiming("cancelled");
+  actionTiming = createActionTiming("enhance");
   actionBusy = true;
   activeMediaKind = null;
   syncDecodeButton();
   if (!await isServiceReady()) {
+    finishActionTiming("error");
     actionBusy = false;
     syncDecodeButton();
     return;
   }
   els.enhanceError.classList.add("hidden");
+  actionTiming?.mark("readiness_complete");
   showScreen("processing");
   els.jobError.classList.add("hidden");
   els.backBtn.classList.add("hidden");
@@ -573,6 +598,7 @@ async function startEnhance() {
   els.uploadProgress.classList.add("is-indeterminate");
   renderSteps("structure", true);
   enhanceAttemptKey ||= createUploadAttemptId();
+  actionTiming?.mark("upload_start");
   try {
     const response = await fetchWithTimeout(apiUrl("/api/orb/enhance"), {
       method: "POST", headers: { "Content-Type": "application/json",
@@ -580,12 +606,15 @@ async function startEnhance() {
       body: JSON.stringify({ prompt, output: els.enhanceOutput.value,
         style: els.enhanceStyle.value, detail: els.enhanceDetail.value }),
     }, UPLOAD_TIMEOUT_MS);
+    actionTiming?.mark("upload_returned");
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.job_id) throw new Error(data.detail || `request failed (${response.status})`);
     currentJobId = data.job_id;
+    actionTiming?.mark("job_available");
     rememberPaidJob(currentJobId);
     startPolling(currentJobId);
   } catch (error) {
+    finishActionTiming("error");
     actionBusy = false;
     showError(els.jobError, cleanServiceError(error.message, "Connection interrupted. Try again."));
     els.backBtn.classList.remove("hidden");
@@ -607,7 +636,12 @@ function startPolling(jobId) {
 
 function schedulePoll(jobId, ms = 1500) {
   clearTimeout(pollTimer);
-  pollTimer = setTimeout(() => pollJob(jobId), ms);
+  const timing = actionTiming;
+  const scheduledAt = timing ? performance.now() : 0;
+  pollTimer = setTimeout(() => {
+    timing?.add("poll_wait_ms", performance.now() - scheduledAt);
+    pollJob(jobId);
+  }, ms);
 }
 
 function pausePaidJobForAuthentication(jobId) {
@@ -624,6 +658,9 @@ function pausePaidJobForAuthentication(jobId) {
 
 async function pollJob(jobId) {
   if (jobId !== currentJobId) return;
+  const timing = actionTiming;
+  const pollStarted = timing ? performance.now() : 0;
+  timing?.add("poll_requests");
   let job;
   try {
     const pollHeaders = creditMode === "credits" ? wallet.headers() : {};
@@ -656,6 +693,8 @@ async function pollJob(jobId) {
     if (creditMode === "credits") void wallet.refresh();
     syncDecodeButton();
     return;
+  } finally {
+    timing?.add("poll_request_ms", performance.now() - pollStarted);
   }
   if (jobId !== currentJobId) return;
   pollFailures = 0;
@@ -664,9 +703,11 @@ async function pollJob(jobId) {
   els.phaseDetail.textContent = mapped.detail;
   renderSteps(mapped.step, true);
   if (job.state === "complete") {
+    actionTiming?.mark("result_detected");
     clearTimeout(pollTimer);
     fetchResult(jobId);
   } else if (job.state === "error") {
+    finishActionTiming("error");
     clearTimeout(pollTimer);
     forgetPaidJob();
     visualAttemptKey = null;
@@ -683,6 +724,7 @@ async function pollJob(jobId) {
 }
 
 function discardJob() {
+  finishActionTiming("error");
   clearTimeout(pollTimer);
   forgetPaidJob();
   currentJobId = null;
@@ -708,7 +750,10 @@ async function fetchResult(jobId) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || `status ${response.status}`);
     if (jobId !== currentJobId) return;
+    actionTiming?.mark("result_received");
     renderResult(result);
+    actionTiming?.mark("result_displayed");
+    finishActionTiming("complete");
     if (creditMode === "credits") void wallet.refresh();
   } catch (error) {
     if (jobId !== currentJobId) return;
@@ -931,6 +976,7 @@ els.copyPrompt.addEventListener("click", async () => {
   }
 });
 els.backBtn.addEventListener("click", () => {
+  finishActionTiming("cancelled");
   currentJobId = null;
   actionBusy = false;
   syncDecodeButton();

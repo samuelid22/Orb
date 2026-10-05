@@ -8,6 +8,7 @@ from prometheus.config import SamplingConfig
 from prometheus.errors import PrometheusError
 from prometheus.video.probe import VideoMetadata
 from prometheus.video.tools import VideoToolError, resolve_tool
+from prometheus.performance import metric, process_run, timed
 
 
 @dataclass
@@ -40,6 +41,7 @@ def cap_evenly(items: list, limit: int) -> list:
     return [items[int(i * step)] for i in range(limit)]
 
 
+@timed("frame_extraction")
 def extract_frame(
     ffmpeg: str,
     video_path: str,
@@ -59,7 +61,7 @@ def extract_frame(
         cmd += ["-q:v", str(image_quality)]
     cmd.append(str(destination))
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = process_run(subprocess.run, "ffmpeg", cmd, capture_output=True, text=True, timeout=120)
     except OSError as exc:
         raise VideoToolError(f"Could not start ffmpeg executable {ffmpeg}: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
@@ -106,6 +108,7 @@ class FrameSampler:
                 self.config.image_quality,
             )
             frames.append(SampledFrame(index=index, timestamp=timestamp, path=path))
+            metric("frames")
         return frames
 
     def _plan(self, video: VideoMetadata) -> list[float]:

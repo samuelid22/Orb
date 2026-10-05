@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from prometheus.performance import JobTiming, bind, current, observe, timed
+
 
 @dataclass
 class Job:
@@ -19,6 +21,7 @@ class Job:
     run_dir: Path | None = None
     tier: str = "advanced"
     source_file: str = "source.mp4"
+    timing: JobTiming | None = field(default=None, repr=False, compare=False)
 
 
 class JobManager:
@@ -31,6 +34,7 @@ class JobManager:
         self._active_job_ids: set[str] = set()
         self._queued_work: dict[str, Callable[[], None]] = {}
 
+    @timed("job_creation")
     def create(
         self, video_name: str, tier: str = "advanced", source_file: str = "source.mp4"
     ) -> Job:
@@ -39,7 +43,10 @@ class JobManager:
             video_name=video_name,
             tier=tier,
             source_file=source_file,
+            timing=current(),
         )
+        if job.timing is not None:
+            job.timing.job_id = job.id
         with self._lock:
             self._jobs[job.id] = job
         return job
@@ -50,6 +57,8 @@ class JobManager:
                 raise KeyError(f"Unknown job: {job_id}")
             if job_id in self._active_job_ids or job_id in self._queued_work:
                 return
+            with bind(self._jobs[job_id].timing):
+                observe("enqueue")
             self._queued_job_ids.append(job_id)
             self._queued_work[job_id] = work
             self._start_available_workers()
@@ -66,14 +75,20 @@ class JobManager:
             self._executor.submit(self._run, job_id, work)
 
     def _run(self, job_id: str, work: Callable[[], None]) -> None:
-        try:
-            work()
-        except Exception as exc:
-            self.update(job_id, state="error", error=str(exc) or exc.__class__.__name__)
-        finally:
-            with self._lock:
-                self._active_job_ids.discard(job_id)
-                self._start_available_workers()
+        job = self.get(job_id)
+        with bind(job.timing if job else None):
+            observe("worker_start")
+            status = "complete"
+            try:
+                work()
+            except Exception as exc:
+                status = "error"
+                self.update(job_id, state="error", error=str(exc) or exc.__class__.__name__)
+            finally:
+                observe("finish", status)
+                with self._lock:
+                    self._active_job_ids.discard(job_id)
+                    self._start_available_workers()
 
     def remove(self, job_id: str) -> None:
         with self._lock:

@@ -406,11 +406,15 @@ npm run build:vercel
 
 The placeholder is for build validation only. Use the real public Orb backend origin for deployment.
 
-Repository validation on **2026-10-04** (`main`): **274 backend tests passed**, **8 opt-in real-Postgres tests skipped**, **62 frontend tests passed**, and the guarded production frontend build passed. No deployment was performed during this validation.
+Repository validation on **2026-10-06** (`main`): **287 backend tests passed**, **8 opt-in real-Postgres tests skipped**, **192 frontend tests passed**, and the guarded production frontend build passed. No deployment was performed during this validation.
 
 The backend suite covers AI validation, upload reliability, wallet authentication, payment verification, credit lifecycle, result recovery, and production guards. The frontend suite covers wallet/session recovery, payment requests, mode state, results, and UI behavior.
 
 Provider and blockchain integration tests use test doubles. Postgres adapter tests use a SQL-recording driver and a SQLite-backed database double; they do not connect to a live Supabase database. The opt-in real-Postgres migration tests require the disposable rehearsal database and were not run in this pass. Live AI and on-chain checks are separate from these automated tests.
+
+## Performance Diagnostics
+
+Orb records content-free structured backend timings for upload, validation, queue wait, media processing, AI calls/retries, result persistence, and credit settlement. Browser timings are development-only by default, with a local tab opt-in for production diagnostics. This does not change processing or payment behavior. See [Performance timing](docs/PERFORMANCE_TIMING.md) for metrics, safe diagnostic activation, local mock-provider fixture results, and measurement limits.
 
 ## Project Layout
 

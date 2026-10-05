@@ -19,6 +19,7 @@ from prometheus.errors import PrometheusError
 from prometheus.video.probe import VideoMetadata
 from prometheus.video.sampler import SampledFrame
 from prometheus.video.segmenter import Scene
+from prometheus.performance import ai_call, attempt as perf_attempt, categorized, retry_wait, stage, timed
 
 RETRYABLE_STATUS_CODES = (429, 500, 503)
 MAX_RETRIES = 3
@@ -118,6 +119,7 @@ class _BaseRemoteAnalyzer(MultimodalAnalyzer):
     def provenance(self) -> dict[str, str]:
         return {"provider": self._provider, "model": self._model, "mode": "real"}
 
+    @categorized("global_analysis")
     def analyze(
         self,
         metadata: VideoMetadata,
@@ -131,6 +133,7 @@ class _BaseRemoteAnalyzer(MultimodalAnalyzer):
             lambda raw: self._parse_report(raw, metadata, frames),
         )
 
+    @categorized("scene_analysis")
     def analyze_scene(
         self, metadata: VideoMetadata, scene: Scene, frames: list[SampledFrame]
     ) -> SceneAnalysis:
@@ -148,7 +151,10 @@ class _BaseRemoteAnalyzer(MultimodalAnalyzer):
         last_error_was_output = False
         for attempt in range(MAX_RETRIES + 1):
             try:
-                return parse(call())
+                with perf_attempt(attempt + 1):
+                    raw = call()
+                    with stage("response_validation"):
+                        return parse(raw)
             except ModelOutputError as exc:
                 last_error = exc
                 last_error_was_output = True
@@ -160,7 +166,11 @@ class _BaseRemoteAnalyzer(MultimodalAnalyzer):
                 last_error = exc
                 last_error_was_output = False
             if attempt < MAX_RETRIES:
-                time.sleep(BACKOFF_BASE_SECONDS * (2**attempt))
+                seconds = BACKOFF_BASE_SECONDS * (2**attempt)
+                with perf_attempt(attempt + 1):
+                    retry_wait(seconds)
+                    with stage("ai_retry_wait"):
+                        time.sleep(seconds)
         if last_error_was_output:
             raise PrometheusError(
                 f"{self._provider} returned unusable analysis output after {MAX_RETRIES + 1} attempts: "
@@ -226,6 +236,7 @@ class _BaseRemoteAnalyzer(MultimodalAnalyzer):
             ) from exc
         return analysis
 
+    @timed("response_parsing")
     def _load_json(self, raw: str) -> Any:
         if not raw or not raw.strip():
             raise ModelOutputError(
@@ -315,14 +326,15 @@ class OpenAIAnalyzer(_BaseRemoteAnalyzer):
         ]
         for frame in frames:
             user_content.append(self._image_content(frame.path))
-        response = self._api_client.chat.completions.create(
-            model=self._model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-        )
+        with ai_call():
+            response = self._api_client.chat.completions.create(
+                model=self._model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+            )
         return response.choices[0].message.content or ""
 
     def _call_scene_model(
@@ -333,17 +345,19 @@ class OpenAIAnalyzer(_BaseRemoteAnalyzer):
         ]
         for frame in frames:
             user_content.append(self._image_content(frame.path))
-        response = self._api_client.chat.completions.create(
-            model=self._model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": SCENE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ],
-        )
+        with ai_call():
+            response = self._api_client.chat.completions.create(
+                model=self._model,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SCENE_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content},
+                ],
+            )
         return response.choices[0].message.content or ""
 
     @staticmethod
+    @timed("frame_serialization")
     def _image_content(path: Path) -> dict:
         encoded = base64.b64encode(Path(path).read_bytes()).decode("ascii")
         media_type = "image/jpeg" if path.suffix.lower() in (".jpg", ".jpeg") else "image/png"
@@ -388,11 +402,12 @@ class GeminiAnalyzer(_BaseRemoteAnalyzer):
         ]
         for frame in frames:
             parts.append(self._image_part(frame.path))
-        response = self._api_client.models.generate_content(
-            model=self._model,
-            contents=parts,
-            config=self._config(SYSTEM_PROMPT),
-        )
+        with ai_call():
+            response = self._api_client.models.generate_content(
+                model=self._model,
+                contents=parts,
+                config=self._config(SYSTEM_PROMPT),
+            )
         return self._extract_text(response)
 
     def _call_scene_model(
@@ -405,11 +420,12 @@ class GeminiAnalyzer(_BaseRemoteAnalyzer):
         ]
         for frame in frames:
             parts.append(self._image_part(frame.path))
-        response = self._api_client.models.generate_content(
-            model=self._model,
-            contents=parts,
-            config=self._config(SCENE_SYSTEM_PROMPT),
-        )
+        with ai_call():
+            response = self._api_client.models.generate_content(
+                model=self._model,
+                contents=parts,
+                config=self._config(SCENE_SYSTEM_PROMPT),
+            )
         return self._extract_text(response)
 
     @staticmethod
@@ -424,6 +440,7 @@ class GeminiAnalyzer(_BaseRemoteAnalyzer):
         )
 
     @staticmethod
+    @timed("frame_serialization")
     def _image_part(path: Path) -> Any:
         from google.genai import types
 
@@ -432,6 +449,7 @@ class GeminiAnalyzer(_BaseRemoteAnalyzer):
         return types.Part.from_bytes(data=data, mime_type=media_type)
 
     @staticmethod
+    @timed("response_parsing")
     def _extract_text(response: Any) -> str:
         try:
             text = getattr(response, "text", None)

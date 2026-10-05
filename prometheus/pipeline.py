@@ -25,6 +25,7 @@ from prometheus.storage import (
 from prometheus.video.probe import VideoMetadata, probe_video
 from prometheus.video.sampler import FrameSampler, SampledFrame
 from prometheus.video.segmenter import Scene, SceneSegmenter
+from prometheus.performance import metric
 
 
 @dataclass
@@ -61,9 +62,11 @@ class PrometheusPipeline:
         run_dir, frames_dir = prepare_run_directory(video_path, config.output.directory)
         notify("Detecting scene cuts")
         scenes = self.segmenter.segment(metadata)
+        metric("scene_count", len(scenes))
         scene_summaries = self._analyze_scenes(metadata, scenes, run_dir, notify)
         notify("Sampling representative frames")
         frames = self.sampler.sample(metadata, frames_dir)
+        metric("global_frames", len(frames))
         if not frames:
             raise PrometheusError(f"No frames could be extracted from {metadata.path}")
         notify("Analyzing shared characteristics")
@@ -112,6 +115,7 @@ class PrometheusPipeline:
                 self.config.segmentation.frames_per_scene,
                 scene_dir / "frames",
             )
+            metric("scene_frames", len(frames))
             analysis = self.analyzer.analyze_scene(metadata, scene, frames)
             prompt = build_scene_reconstruction_prompt(analysis)
             analysis_path = save_scene_analysis(scene_dir, analysis)

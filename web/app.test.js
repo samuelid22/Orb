@@ -144,6 +144,34 @@ async function startPaidJobWithExpiredSession({ released = false } = {}) {
 }
 
 describe("Orb frontend", () => {
+  it.each(["decode", "compose", "enhance"])("records %s lifecycle diagnostics without changing result or request counts", async (mode) => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const api = mockApi();
+    await import("./app.js");
+    await flush();
+    document.getElementById(`mode-${mode}`).click();
+    if (mode === "enhance") {
+      const input = document.getElementById("prompt-input");
+      input.value = "private-prompt-sentinel";
+      input.dispatchEvent(new Event("input"));
+      document.getElementById("enhance-btn").click();
+    } else {
+      chooseVideo("private-filename.mp4");
+      document.getElementById("decode-btn").click();
+    }
+    await flush();
+    await vi.waitFor(() => expect(info.mock.calls.filter(([label]) => label === "orb_perf_frontend")).toHaveLength(1));
+    const values = info.mock.calls.find(([label]) => label === "orb_perf_frontend")[1];
+    expect(values.operation).toBe(mode === "enhance" ? "enhance" : `${mode}_video`);
+    expect(values.status).toBe("complete");
+    for (const field of ["readiness_wait_ms", "upload_request_ms", "job_available_ms", "result_detected_ms", "result_displayed_ms", "total_ms"]) {
+      expect(values[field]).toBeGreaterThanOrEqual(0);
+    }
+    expect(values.poll_requests).toBe(1);
+    expect(JSON.stringify(values)).not.toContain("private-");
+    expect(document.getElementById("res-prompt").textContent).toBe("A blue car under soft daylight.");
+    expect(api.mock.calls.filter(([url]) => mode === "enhance" ? url === "/api/orb/enhance" : isInspectUrl(url))).toHaveLength(1);
+  });
   beforeEach(() => {
     vi.resetModules();
     delete window.ethereum;

@@ -10,6 +10,7 @@ from typing import Any
 
 from prometheus.analysis.analyzer import GeminiAnalyzer, OpenAIAnalyzer
 from prometheus.errors import PrometheusError
+from prometheus.performance import ai_call, categorized, stage
 
 
 VISUAL_FIELDS = (
@@ -68,24 +69,28 @@ class OrbAIService:
 
                 parts: list[Any] = [types.Part.from_text(text=user)]
                 if image is not None:
-                    parts.append(types.Part.from_bytes(
-                        data=image.read_bytes(), mime_type=_mime(image),
-                    ))
-                response = self.analyzer._api_client.models.generate_content(
-                    model=self.model, contents=parts,
-                    config=GeminiAnalyzer._config(system),
-                )
+                    with stage("frame_serialization"):
+                        parts.append(types.Part.from_bytes(
+                            data=image.read_bytes(), mime_type=_mime(image),
+                        ))
+                with ai_call():
+                    response = self.analyzer._api_client.models.generate_content(
+                        model=self.model, contents=parts,
+                        config=GeminiAnalyzer._config(system),
+                    )
                 return GeminiAnalyzer._extract_text(response)
             content: list[dict[str, Any]] = [{"type": "text", "text": user}]
             if image is not None:
-                encoded = base64.b64encode(image.read_bytes()).decode("ascii")
-                content.append({"type": "image_url", "image_url": {
-                    "url": f"data:{_mime(image)};base64,{encoded}"}})
-            response = self.analyzer._api_client.chat.completions.create(
-                model=self.model, response_format={"type": "json_object"},
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": content}],
-            )
+                with stage("frame_serialization"):
+                    encoded = base64.b64encode(image.read_bytes()).decode("ascii")
+                    content.append({"type": "image_url", "image_url": {
+                        "url": f"data:{_mime(image)};base64,{encoded}"}})
+            with ai_call():
+                response = self.analyzer._api_client.chat.completions.create(
+                    model=self.model, response_format={"type": "json_object"},
+                    messages=[{"role": "system", "content": system},
+                              {"role": "user", "content": content}],
+                )
             return response.choices[0].message.content or ""
 
         def parse(raw: str) -> dict[str, Any]:
@@ -96,11 +101,14 @@ class OrbAIService:
 
         return self.analyzer._generate_with_retries(call, parse)
 
+    @categorized("image_analysis")
     def image(self, operation: str, image: Path) -> dict[str, Any]:
         system = _IMAGE_DECODE if operation == "decode" else _IMAGE_COMPOSE
         data = self._generate(system, "Analyze the attached reference image and return the requested JSON.", image)
-        return _visual_result(data, operation)
+        with stage("response_validation"):
+            return _visual_result(data, operation)
 
+    @categorized("compose_synthesis")
     def compose_video(self, analysis: dict[str, Any]) -> dict[str, Any]:
         evidence = {
             "summary": analysis.get("summary", ""),
@@ -111,16 +119,19 @@ class OrbAIService:
             ],
         }
         data = self._generate(_VIDEO_COMPOSE, json.dumps(evidence, ensure_ascii=False))
-        prompt = _required_text(data, "prompt")
-        return {"prompt": prompt, "visual_analysis": _visual_from_report(analysis),
-                "refinements": _refinements(data)}
+        with stage("response_validation"):
+            prompt = _required_text(data, "prompt")
+            return {"prompt": prompt, "visual_analysis": _visual_from_report(analysis),
+                    "refinements": _refinements(data)}
 
+    @categorized("enhance")
     def enhance(self, prompt: str, output: str, style: str, detail: str) -> str:
         data = self._generate(_ENHANCE, json.dumps({
             "original_prompt": prompt, "intended_output": output,
             "visual_style": style, "detail_level": detail,
         }, ensure_ascii=False))
-        return _required_text(data, "enhanced_prompt")
+        with stage("response_validation"):
+            return _required_text(data, "enhanced_prompt")
 
 
 def _mime(path: Path) -> str:

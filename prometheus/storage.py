@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from prometheus.performance import timed
+
 import json
 import re
 import shutil
@@ -46,6 +48,7 @@ def prepare_scene_directory(run_dir: Path, scene: Scene) -> Path:
     return scene_dir
 
 
+@timed("artifact_persistence")
 def save_manifest(
     run_dir: Path,
     metadata: VideoMetadata,
@@ -70,12 +73,14 @@ def save_manifest(
     return path
 
 
+@timed("artifact_persistence")
 def save_analysis(run_dir: Path, report: AnalysisReport) -> Path:
     path = Path(run_dir) / "analysis.json"
     path.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
     return path
 
 
+@timed("artifact_persistence")
 def save_prompt(run_dir: Path, prompt: str) -> tuple[Path, Path]:
     md_path = Path(run_dir) / "reconstructed_prompt.md"
     txt_path = Path(run_dir) / "reconstructed_prompt.txt"
@@ -84,12 +89,14 @@ def save_prompt(run_dir: Path, prompt: str) -> tuple[Path, Path]:
     return md_path, txt_path
 
 
+@timed("artifact_persistence")
 def save_scene_analysis(scene_dir: Path, analysis: SceneAnalysis) -> Path:
     path = Path(scene_dir) / "scene.json"
     path.write_text(json.dumps(analysis.to_dict(), indent=2), encoding="utf-8")
     return path
 
 
+@timed("artifact_persistence")
 def save_scene_prompt(scene_dir: Path, prompt: str) -> tuple[Path, Path]:
     md_path = Path(scene_dir) / "reconstruction_prompt.md"
     txt_path = Path(scene_dir) / "reconstruction_prompt.txt"

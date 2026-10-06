@@ -122,7 +122,10 @@ describe("Orb wallet authentication UI", () => {
   });
 
   afterEach(() => {
-    vi.clearAllTimers();
+    if (vi.isFakeTimers()) {
+      vi.clearAllTimers();
+      expect(vi.getTimerCount()).toBe(0);
+    }
     vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
@@ -522,13 +525,35 @@ describe("Orb wallet authentication UI", () => {
   });
 
   it("blocks wallet actions if the USDG Preview points to a native backend", async () => {
+    // This intentional config failure schedules retries; keep them owned by
+    // this test so an old wallet cannot render into a later test's document.
+    vi.useFakeTimers();
     vi.stubEnv("VITE_ORB_DEPLOYMENT_TARGET", "usdg-staging");
-    const { provider } = setup();
+    const { provider, fetchMock } = setup();
     const wallet = renderWallet();
-    await flush();
+    await vi.advanceTimersByTimeAsync(0);
+    const configCalls = () => fetchMock.mock.calls.filter(([path]) => path === "/api/orb/credits/config");
+    expect(configCalls()).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(configCalls()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(configCalls()).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(1); // Next retry is cleared in afterEach.
     expect(wallet.isEnabled()).toBe(false);
+    expect(wallet.isAuthenticated()).toBe(false);
+    expect(wallet.walletAddress()).toBeNull();
+    expect(document.querySelector('[data-method][aria-pressed="true"]')).toBeNull();
     expect(document.getElementById("wallet-connect").disabled).toBe(true);
+    expect(document.getElementById("wallet-buy").disabled).toBe(true);
+    document.getElementById("header-wallet").click();
+    document.getElementById("wallet-buy").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(configCalls()).toHaveLength(2);
+    expect(document.getElementById("wallet-feedback").textContent).toBe("Credit service is starting…");
+    expect(fetchMock.mock.calls.some(([path]) => path === "/api/orb/credits/quotes")).toBe(false);
     expect(provider.request.mock.calls.filter(([arg]) => arg.method === "personal_sign")).toHaveLength(0);
+    expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(0);
   });
 
   it("shows both server-enabled methods, switches compact selection and clears old quote copy", async () => {
@@ -572,18 +597,25 @@ describe("Orb wallet authentication UI", () => {
   });
 
   it.each(["native_eth", "usdg"])("rejects quotes for another method before wallet approval (%s)", async (method) => {
-    const { provider } = setup({ dual: true, quoteChange(quote) {
+    const { provider, fetchMock } = setup({ dual: true, quoteChange(quote) {
       quote.payment_method = method === "native_eth" ? "usdg" : "native_eth";
     } });
-    renderWallet();
-    await flush();
+    const wallet = renderWallet();
+    await vi.waitFor(() => {
+      expect(wallet.isEnabled()).toBe(true);
+      expect(document.getElementById("wallet-connect").disabled).toBe(false);
+    });
     document.getElementById("wallet-connect").click();
-    await flush();
+    await vi.waitFor(() => {
+      expect(wallet.isAuthenticated()).toBe(true);
+      expect(document.getElementById("wallet-buy").disabled).toBe(false);
+    });
     document.querySelector(`[data-method="${method}"]`).click();
+    expect(document.querySelector('[data-method][aria-pressed="true"]').dataset.method).toBe(method);
     document.getElementById("wallet-buy").click();
-    await flush();
-    expect(document.getElementById("wallet-feedback").textContent).toContain("wrong payment method");
+    await vi.waitFor(() => expect(document.getElementById("wallet-feedback").textContent).toContain("wrong payment method"));
     expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_sendTransaction")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([path]) => path.endsWith("/verify"))).toHaveLength(0);
   });
 
   it("does not invent a disabled server payment option", async () => {

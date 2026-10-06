@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextvars import copy_context
 from pathlib import Path
 from typing import Callable
 
@@ -22,10 +24,10 @@ from prometheus.storage import (
     save_scene_analysis,
     save_scene_prompt,
 )
-from prometheus.video.probe import VideoMetadata, probe_video
+from prometheus.video.probe import ValidatedVideo, VideoMetadata, probe_video
 from prometheus.video.sampler import FrameSampler, SampledFrame
 from prometheus.video.segmenter import Scene, SceneSegmenter
-from prometheus.performance import metric
+from prometheus.performance import metric, stage
 
 
 @dataclass
@@ -53,19 +55,23 @@ class PrometheusPipeline:
         self,
         video_path: Path | str,
         progress: Callable[[str], None] | None = None,
+        *, validated_video: ValidatedVideo | None = None,
     ) -> PipelineResult:
         notify = progress or (lambda message: None)
         config = self.config
         config.validate()
         notify("Inspecting video")
-        metadata = probe_video(video_path)
+        metadata = (validated_video.metadata if validated_video is not None and validated_video.matches(video_path)
+                    else probe_video(video_path))
+        # Scoped to this immutable source and this run; never reused across jobs.
+        extraction_cache: dict = {}
         run_dir, frames_dir = prepare_run_directory(video_path, config.output.directory)
         notify("Detecting scene cuts")
         scenes = self.segmenter.segment(metadata)
         metric("scene_count", len(scenes))
-        scene_summaries = self._analyze_scenes(metadata, scenes, run_dir, notify)
+        scene_summaries = self._analyze_scenes(metadata, scenes, run_dir, notify, extraction_cache)
         notify("Sampling representative frames")
-        frames = self.sampler.sample(metadata, frames_dir)
+        frames = self.sampler.sample(metadata, frames_dir, extraction_cache=extraction_cache)
         metric("global_frames", len(frames))
         if not frames:
             raise PrometheusError(f"No frames could be extracted from {metadata.path}")
@@ -102,11 +108,13 @@ class PrometheusPipeline:
         scenes: list[Scene],
         run_dir: Path,
         notify: Callable[[str], None],
+        extraction_cache: dict | None = None,
     ) -> list[dict]:
         summaries: list[dict] = []
         total = len(scenes)
+        prepared = []
+        # FFmpeg remains sequential. Only independent provider operations overlap.
         for scene in scenes:
-            notify(f"Analyzing scene {scene.index + 1} of {total}")
             scene_dir = prepare_scene_directory(run_dir, scene)
             frames = self.sampler.sample_range(
                 metadata,
@@ -114,9 +122,13 @@ class PrometheusPipeline:
                 scene.end,
                 self.config.segmentation.frames_per_scene,
                 scene_dir / "frames",
+                extraction_cache=extraction_cache,
             )
             metric("scene_frames", len(frames))
-            analysis = self.analyzer.analyze_scene(metadata, scene, frames)
+            prepared.append((scene, scene_dir, frames))
+
+        def save_scene(item, analysis):
+            scene, scene_dir, frames = item
             prompt = build_scene_reconstruction_prompt(analysis)
             analysis_path = save_scene_analysis(scene_dir, analysis)
             prompt_md_path, _ = save_scene_prompt(scene_dir, prompt)
@@ -126,4 +138,41 @@ class PrometheusPipeline:
             scene_info["analysis_file"] = str(analysis_path.relative_to(run_dir))
             scene_info["prompt_file"] = str(prompt_md_path.relative_to(run_dir))
             summaries.append(scene_info)
+
+        # At most two outstanding scene calls, including their existing retries.
+        # Refill on completion, but assemble in original order. On failure, stop
+        # scheduling and join already-running calls before source cleanup/settlement.
+        with stage("scene_ai_wall"):
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="orb-scene") as executor:
+                pending = {}
+                items = iter(enumerate(prepared))
+                analyses = [None] * total
+                completed = 0
+
+                def submit_next():
+                    item = next(items, None)
+                    if item is not None:
+                        position, (scene, _, frames) = item
+                        future = executor.submit(copy_context().run, self.analyzer.analyze_scene, metadata, scene, frames)
+                        pending[future] = position
+
+                try:
+                    submit_next()
+                    submit_next()
+                    if total:
+                        notify(f"Analyzing scene 1 of {total}")
+                    while pending:
+                        done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                        # Observe all completed failures before dispatching more.
+                        for future in sorted(done, key=pending.get):
+                            analyses[pending.pop(future)] = future.result()
+                            completed += 1
+                        notify(f"Analyzing scene {min(completed + 1, total)} of {total}")
+                        for _ in done:
+                            submit_next()
+                finally:
+                    for future in pending:
+                        future.cancel()
+        for item, analysis in zip(prepared, analyses):
+            save_scene(item, analysis)
         return summaries

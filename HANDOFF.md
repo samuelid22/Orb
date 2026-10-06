@@ -1348,3 +1348,70 @@ a temporary process-only model override described below.
   actual transactions, production service/database access or deployment occurs
   in this pass. User authorized commit/push to main after validation; automatic
   production Git deployments were previously confirmed disabled.
+
+## 2026-10-06 Safe video performance Phase 1
+
+- Dependency inspection confirmed each scene call depends only on metadata,
+  its own scene and frames. Only those calls now overlap, with a maximum of two
+  outstanding calls including their existing retry loops. A completed slot is
+  replenished immediately; results and artifacts are assembled in original
+  scene position order. FFmpeg remains sequential. Global analysis depends on
+  the ordered scene descriptions and remains sequential; Compose synthesis
+  consumes the completed report and remains sequential afterward.
+- Scene frames are prepared before the bounded AI phase. On failure/interruption,
+  dispatch stops once the failure is observed, pending calls are cancelled where
+  possible, and running calls are joined before source cleanup or settlement.
+  Synchronous SDK calls cannot be forcibly cancelled; existing timeouts and retry
+  policy remain unchanged. Already-started independent work may finish after
+  another scene fails. No unbounded scene queue or additional job worker exists.
+- Orb visual upload validation now returns internal ValidatedVideo metadata.
+  The pipeline reuses it only when resolved path, device/inode, size and nanosecond
+  modification/change timestamps match the original before/after-probe identity.
+  Otherwise the authoritative existing probe is retained. Unchanged Orb uploads
+  use one FFprobe instead of two. Standalone/legacy callers still probe normally.
+- Per-run extraction cache uses the exact existing three-decimal FFmpeg seek
+  argument, source path, image format and quality. It copies identical bytes into
+  the original destinations, retaining raw timestamps, indices, order, filenames
+  and every scene/global evidence entry. No nearby seek strings are merged and
+  no cache survives between jobs. Default synthetic/two-cut fixtures have zero
+  duplicates; the existing four-global-frame two-cut configuration shares four
+  seeks (0.500, 1.500, 2.500, 3.500). Production sampling settings are unchanged.
+- Existing orb_perf fields/events remain. Added peak_ai_concurrency,
+  sequential_ai_sum_ms (alias of summed ai_total_ms), scene_ai_wall_ms (provider
+  phase including retries/scheduling/join, excluding extraction/ordered writes),
+  unique_extracted_frames and frame_cache_hits. Summed SDK time is not elapsed
+  time when calls overlap. Context is copied separately into each scene thread.
+- No prompts/models, frame count/resolution/JPEG quality, scene thresholds or
+  boundaries, timestamps, FFmpeg commands/timeouts, retries, payment pricing or
+  blockchain verification, database schema, job worker ownership/idempotency,
+  frontend UI, infrastructure, original Prometheus or orb-demo-video changed.
+  Scene threads never reserve credits or persist/settle durable results. Tests
+  prove one worker reservation/result save/settlement, exact consumption or
+  failed-job release, and duplicate-job reuse. Existing GET recovery can safely
+  repeat an idempotent settlement during a race; no duplicate consumption occurs.
+- Added 22 backend tests in tests/test_video_phase1.py: 1/2/12 scenes, maximum
+  concurrency, reordered completion, unchanged prompt instructions/frame bytes /
+  final aggregation, retries, failures, SDK timeout, interruption/join, canonical
+  seeks, metadata identity fallback, generated fixture comparisons, and paid
+  Decode/Compose consumption/release/idempotency. Existing instrumentation/API
+  test adapters now assert one probe and unique-extraction launch counts.
+- Final mock benchmark: four independent 500 ms calls, 2190.2 ms sequential
+  versus 1129.7 ms bounded parallel total; scene AI wall time 1022.4 ms.
+  Generated synthetic/default: 1924.7 -> 1853.9 ms, probes 2 -> 1, ten evidence
+  entries and eleven FFmpeg launches unchanged, two AI calls. Two-cut/default:
+  2515.6 -> 1935.8 ms, twelve entries/thirteen FFmpeg launches/three AI calls
+  unchanged, peak AI calls 1 -> 2. Two-cut/existing four-frame configuration:
+  2224.2 -> 1207.1 ms, eight evidence entries unchanged, unique extractions
+  8 -> 4 and FFmpeg launches 9 -> 5, three AI calls unchanged. Real local
+  FFmpeg/FFprobe; provider delays/responses mocked, no live AI calls or quotas.
+- Full backend: 309 passed, 8 expected opt-in real-Postgres skips, 142 existing
+  FastAPI deprecation warnings. Full frontend: 192 passed; initial default
+  parallel run encountered three Windows Vitest fork startup timeouts, rerun of
+  all eight files with --maxWorkers=1 passed. This changes only test execution,
+  not application worker count/configuration. Guarded production frontend build
+  passed with https://orb-api.example.invalid. Final isolated benchmark subset:
+  four tests passed. README/docs/PERFORMANCE_TIMING.md updated; new
+  docs/VIDEO_PHASE1.md documents safety, measurements and repeatable checks.
+  No production AI/RPC/database/service access, deployment or infrastructure
+  mutation occurs. User authorized commit/push to main after passing validation;
+  automatic Git deployments were previously confirmed disabled.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +35,11 @@ def frame_name(index: int, timestamp: float, image_format: str) -> str:
     return f"frame_{index:03d}_t{timestamp:08.3f}s.{image_format}"
 
 
+def canonical_timestamp(timestamp: float) -> str:
+    # Identical to the existing FFmpeg -ss argument, not a nearby-time heuristic.
+    return f"{timestamp:.3f}"
+
+
 def cap_evenly(items: list, limit: int) -> list:
     if len(items) <= limit:
         return items
@@ -53,7 +59,7 @@ def extract_frame(
     cmd = [
         ffmpeg,
         "-nostdin", "-loglevel", "error", "-y",
-        "-ss", f"{timestamp:.3f}",
+        "-ss", canonical_timestamp(timestamp),
         "-i", video_path,
         "-frames:v", "1",
     ]
@@ -76,10 +82,10 @@ class FrameSampler:
         self.config = config
         self._ffmpeg = resolve_tool("ffmpeg")
 
-    def sample(self, video: VideoMetadata, output_dir: Path) -> list[SampledFrame]:
+    def sample(self, video: VideoMetadata, output_dir: Path, *, extraction_cache: dict | None = None) -> list[SampledFrame]:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        return self._extract_all(video, self._plan(video), output_dir)
+        return self._extract_all(video, self._plan(video), output_dir, extraction_cache)
 
     def sample_range(
         self,
@@ -88,25 +94,33 @@ class FrameSampler:
         end: float,
         count: int,
         output_dir: Path,
+        *, extraction_cache: dict | None = None,
     ) -> list[SampledFrame]:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        return self._extract_all(video, uniform_timestamps(start, end, count), output_dir)
+        return self._extract_all(video, uniform_timestamps(start, end, count), output_dir, extraction_cache)
 
     def _extract_all(
-        self, video: VideoMetadata, timestamps: list[float], output_dir: Path
+        self, video: VideoMetadata, timestamps: list[float], output_dir: Path,
+        extraction_cache: dict | None = None,
     ) -> list[SampledFrame]:
         frames: list[SampledFrame] = []
         for index, timestamp in enumerate(timestamps):
             path = output_dir / frame_name(index, timestamp, self.config.image_format)
-            extract_frame(
-                self._ffmpeg,
-                video.path,
-                timestamp,
-                path,
-                self.config.image_format,
-                self.config.image_quality,
-            )
+            key = (video.path, canonical_timestamp(timestamp), self.config.image_format, self.config.image_quality)
+            cached = extraction_cache.get(key) if extraction_cache is not None else None
+            if cached is not None:
+                if cached != path:
+                    shutil.copyfile(cached, path)
+                metric("frame_cache_hits")
+            else:
+                extract_frame(
+                    self._ffmpeg, video.path, timestamp, path,
+                    self.config.image_format, self.config.image_quality,
+                )
+                metric("unique_extracted_frames")
+                if extraction_cache is not None:
+                    extraction_cache[key] = path
             frames.append(SampledFrame(index=index, timestamp=timestamp, path=path))
             metric("frames")
         return frames

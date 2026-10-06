@@ -50,6 +50,8 @@ probe does not double them.
 | `ffmpeg_ms` | Aggregate scene-detection and frame-extraction subprocess execution |
 | `frame_serialization_ms` | Local frame/image reads and SDK parts or explicit base64 preparation |
 | `ai_total_ms`, `ai_longest_ms` | Sum and maximum of SDK provider call durations |
+| `sequential_ai_sum_ms` | Alias of `ai_total_ms`; sum of call durations, not elapsed wall time when calls overlap |
+| `scene_ai_wall_ms` | Bounded scene-provider phase, including retries and scheduling/join; excludes frame extraction and ordered artifact writes |
 | `ai_success_average_ms` | Average SDK duration for calls that returned without an exception |
 | `ai_retry_wait_ms` | Actual elapsed existing Orb retry sleeps |
 | `response_parsing_ms` | JSON decoding and Gemini text extraction |
@@ -66,6 +68,10 @@ video duration in seconds, scenes, scene/global/total extracted frames, FFmpeg
 and FFprobe launch attempts, SDK AI calls, retries, and whether the operation
 used the paid boundary. Failed process launches are counted as attempts.
 AI/retry counts are explicit zeros when no call/retry occurred.
+`peak_ai_concurrency` counts overlapping SDK calls (at most two scene calls).
+`frames`, `scene_frames`, and `global_frames` retain their original evidence-entry
+meaning. `unique_extracted_frames` counts actual successful frame extractions;
+`frame_cache_hits` counts entries reusing an identical canonical FFmpeg seek.
 
 **Do not add all stage columns to get total time.** Several are nested:
 validation includes its initial FFprobe; extraction includes FFmpeg; response
@@ -83,8 +89,11 @@ includes its planned delay; the summary records actual wait duration. SDK
 internal HTTP retries/serialization are inside SDK call duration and are not
 separately observable here. No SDK hooks or retry policy changes were added.
 
-Thread-local ContextVars are explicitly rebound to each worker's timing record;
-the single-worker FIFO, reservation order and public job payload are unchanged.
+ContextVars are explicitly rebound to each job worker and copied separately
+into each scene-analysis thread. The single-job-worker FIFO, reservation order
+and public job payload are unchanged. See [Phase 1](VIDEO_PHASE1.md) for the
+bounded independent scene-call optimization; global analysis and Compose
+synthesis remain sequential after their dependencies.
 Timing is not recovery state and is not stored in the ledger. Logger failures
 are swallowed by the observer, never by the existing operation/settlement code.
 Request timing can arrive after the summary for an extremely fast job; use its
@@ -117,7 +126,7 @@ not cancel or change the backend job. Poll waits are measured browser scheduling
 time, not an exact server-completion-to-next-poll delay. Client and server
 monotonic timestamps are not interchangeable across machines.
 
-## Local validation example (2026-10-06)
+## Instrumentation baseline example (2026-10-06, before Phase 1)
 
 Generated four-second 320×240 video, 144770 source bytes; real local FFprobe /
 FFmpeg, mocked Gemini SDK transport, SQLite/local bypass. This was run during

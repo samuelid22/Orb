@@ -37,7 +37,7 @@ from prometheus.errors import PrometheusError
 from prometheus.pipeline import PrometheusPipeline
 from prometheus.performance import TimingMiddleware, current, metric, observe, stage, timed
 from prometheus.storage import prepare_run_directory, prepare_scene_directory
-from prometheus.video.probe import probe_video
+from prometheus.video.probe import ValidatedVideo, probe_video, video_identity
 from prometheus.video.sampler import FrameSampler
 from prometheus.video.segmenter import SceneSegmenter
 from prometheus.video.tools import VideoToolError, resolve_tool
@@ -461,9 +461,11 @@ def create_app(
         metric("input_bytes", size)
         return filename, destination
 
-    async def _validate_upload(destination: Path) -> None:
+    async def _validate_upload(destination: Path) -> ValidatedVideo | None:
         try:
-            await run_in_threadpool(probe_video, destination)
+            identity = video_identity(destination)
+            metadata = await run_in_threadpool(probe_video, destination)
+            return ValidatedVideo(metadata, identity) if identity == video_identity(destination) else None
         except VideoToolError as exc:
             destination.unlink(missing_ok=True)
             raise HTTPException(status_code=503, detail=f"Video validation is unavailable: {exc}")
@@ -477,8 +479,8 @@ def create_app(
     @timed("file_validation")
     async def _validate_orb_media(destination: Path) -> dict[str, Any]:
         if destination.suffix.lower() not in _IMAGE_EXTENSIONS:
-            await _validate_upload(destination)
-            return {"kind": "video"}
+            validated = await _validate_upload(destination)
+            return {"kind": "video", "validated_video": validated}
         try:
             from PIL import Image, UnidentifiedImageError
 
@@ -685,7 +687,8 @@ def create_app(
             if media["kind"] == "video":
                 config = _make_config(job.id)
                 pipeline = PrometheusPipeline(config=config)
-                result = pipeline.run(source, progress=lambda stage: manager.update(job.id, stage=stage))
+                result = pipeline.run(source, progress=lambda stage: manager.update(job.id, stage=stage),
+                                      validated_video=media["validated_video"])
                 run_dir = result.output.run_dir
                 analysis = result.report.to_dict()
                 if operation == "decode":

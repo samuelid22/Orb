@@ -25,9 +25,10 @@ OPERATIONS = {"decode_visual", "compose_visual", "decode_image", "decode_video",
 STAGES = {"multipart_receive_parse", "request_parse", "upload_receive", "upload_save", "authorization", "file_validation",
           "file_hash", "job_creation", "credit_reservation", "ffprobe", "ffprobe_process", "scene_detection", "frame_extraction",
           "ffmpeg", "frame_serialization", "response_parsing", "response_validation", "ai_retry_wait", "result_assembly",
-          "artifact_persistence", "result_persistence", "credit_settlement", "cleanup"}
+          "artifact_persistence", "result_persistence", "credit_settlement", "cleanup", "scene_ai_wall"}
 METRICS = {"input_bytes", "received_bytes", "receive_chunks", "video_duration_s", "width", "height", "scene_count",
-           "frames", "scene_frames", "global_frames", "ffmpeg_launches", "ffprobe_launches", "paid", "reused"}
+           "frames", "scene_frames", "global_frames", "ffmpeg_launches", "ffprobe_launches", "paid", "reused",
+           "frame_cache_hits", "unique_extracted_frames"}
 PURPOSES = {"scene_analysis", "global_analysis", "image_analysis", "compose_synthesis", "enhance"}
 NUMERIC_KEYS = METRICS | {s + "_ms" for s in STAGES} | {
     "queue_ms", "processing_ms", "total_ms", "request_ms", "worker_start_ms", "ai_calls", "ai_total_ms", "ai_longest_ms", "ai_retries"}
@@ -56,6 +57,8 @@ class JobTiming:
         self.ai_sequence = 0
         self.ai_successes = 0
         self.ai_success_ms = 0.0
+        self.ai_active = 0
+        self.ai_peak = 0
 
     def add(self, key, value):
         try:
@@ -108,6 +111,8 @@ class JobTiming:
                     for key in ("ffmpeg_launches", "ffprobe_launches", "frames", "scene_frames", "global_frames"):
                         values.setdefault(key, 0)
                 values["ai_success_average_ms"] = round(self.ai_success_ms / self.ai_successes, 3) if self.ai_successes else 0
+                values["peak_ai_concurrency"] = self.ai_peak
+                values["sequential_ai_sum_ms"] = values["ai_total_ms"]
             _emit("orb_perf_summary", {**self.metadata(), "status": status, **values})
         except Exception:
             pass
@@ -199,6 +204,15 @@ def ai_call():
     trace = current()
     start = time.perf_counter()
     success = False
+    counted = False
+    if trace is not None:
+        try:
+            with trace.lock:
+                trace.ai_active += 1
+                trace.ai_peak = max(trace.ai_peak, trace.ai_active)
+                counted = True
+        except Exception:
+            pass
     try:
         yield
         success = True
@@ -207,6 +221,8 @@ def ai_call():
             try:
                 duration = (time.perf_counter() - start) * 1000
                 with trace.lock:
+                    if counted:
+                        trace.ai_active -= 1
                     trace.ai_sequence += 1
                     sequence = trace.ai_sequence
                     trace.values["ai_longest_ms"] = max(trace.values.get("ai_longest_ms", 0), duration)

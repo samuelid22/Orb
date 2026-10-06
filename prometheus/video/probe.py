@@ -36,6 +36,26 @@ class VideoMetadata:
         return f"{self.width // a}:{self.height // a}"
 
 
+def video_identity(path: Path | str) -> tuple:
+    """Internal identity guard for reusing a probe of an unchanged upload."""
+    resolved = Path(path).resolve()
+    stat = resolved.stat()
+    return (str(resolved), stat.st_dev, stat.st_ino, stat.st_size,
+            stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+@dataclass(frozen=True)
+class ValidatedVideo:
+    metadata: VideoMetadata
+    identity: tuple
+
+    def matches(self, path: Path | str) -> bool:
+        try:
+            return self.identity == video_identity(path) and self.metadata.path == str(Path(path).resolve())
+        except OSError:
+            return False
+
+
 @timed("ffprobe")
 def probe_video(video_path: Path | str) -> VideoMetadata:
     path = Path(video_path).resolve()

@@ -104,9 +104,9 @@ def test_video_workflows_reuse_pipeline(tmp_path, monkeypatch, synthetic_video):
         def __init__(self, config):
             self.pipeline = PrometheusPipeline(config=config, analyzer=MockAnalyzer())
 
-        def run(self, source, progress=None):
+        def run(self, source, progress=None, **kwargs):
             calls.append(source)
-            return self.pipeline.run(source, progress=progress)
+            return self.pipeline.run(source, progress=progress, **kwargs)
 
     monkeypatch.setattr(api_module, "PrometheusPipeline", FakePipeline)
     client = _client(tmp_path, monkeypatch)

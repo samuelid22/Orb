@@ -160,12 +160,13 @@ def test_real_video_tools_with_mocked_ai_have_exact_counts(tmp_path, monkeypatch
     result = _result(client, job_id)
     event = summary(caplog, job_id)
     assert event["operation"] == operation + "_video"
-    assert event["ffprobe_launches"] == 2
+    assert event["ffprobe_launches"] == 1  # Reuse authoritative unchanged-upload metadata.
     assert event["video_duration_s"] == result["video"]["duration"] == 4
     assert event["width"] == 320 and event["height"] == 240
     assert event["scene_count"] == len(result["scenes"])
     assert event["frames"] == event["scene_frames"] + event["global_frames"]
-    assert event["ffmpeg_launches"] == event["frames"] + 1
+    assert event["ffmpeg_launches"] == event["unique_extracted_frames"] + 1
+    assert event["unique_extracted_frames"] + event.get("frame_cache_hits", 0) == event["frames"]
     assert event["ai_calls"] == event["scene_count"] + 1 + (operation == "compose")
     assert sdk.models.calls == event["scene_count"] + 1
     assert compose_sdk.models.calls == (operation == "compose")

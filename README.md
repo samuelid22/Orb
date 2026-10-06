@@ -406,7 +406,11 @@ npm run build:vercel
 
 The placeholder is for build validation only. Use the real public Orb backend origin for deployment.
 
-Repository validation on **2026-10-06** (`main`): **287 backend tests passed**, **8 opt-in real-Postgres tests skipped**, **192 frontend tests passed**, and the guarded production frontend build passed. No deployment was performed during this validation.
+Repository validation on **2026-10-06** (`main`): **309 backend tests passed**, **8 opt-in real-Postgres tests skipped**, **192 frontend tests passed**, and the guarded production frontend build passed. No deployment was performed during this validation.
+
+Video performance Phase 1 adds bounded independent scene AI calls (maximum two),
+reuse of validated unchanged-upload metadata, and exact FFmpeg seek reuse without
+changing visual evidence or prompts. See [implementation and local comparisons](docs/VIDEO_PHASE1.md).
 
 The backend suite covers AI validation, upload reliability, wallet authentication, payment verification, credit lifecycle, result recovery, and production guards. The frontend suite covers wallet/session recovery, payment requests, mode state, results, and UI behavior.
 

@@ -9,6 +9,7 @@
 </head>
 <body>
 <div class="app-frame">
+  <div class="atmosphere" aria-hidden="true"><span class="atmosphere-orb atmosphere-orb-left"></span><span class="atmosphere-orb atmosphere-orb-right"></span></div>
   <header class="topbar">
     <div class="brand" aria-label="Orb">
       <span class="brand-icon" aria-hidden="true">
@@ -18,6 +19,7 @@
     </div>
     <div class="header-actions">
       <button id="header-wallet" class="header-wallet" type="button" aria-label="Connect wallet" aria-controls="wallet-panel" aria-expanded="false">Connect Wallet</button>
+      <div id="header-credits" class="header-credits hidden" role="status" aria-live="polite" aria-label="Available testnet credits"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 4 14 4 14 0V6M5 12v6c0 4 14 4 14 0v-6"/></svg><span><strong id="header-credit-value">0</strong><small>Test credits</small></span></div>
       <div class="menu-wrap">
       <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Open menu" aria-controls="site-menu" aria-expanded="false">
         <span></span><span></span><span></span>
@@ -112,9 +114,24 @@
     <section id="screen-home" class="screen" tabindex="-1">
       <div class="hero">
         <span class="studio-badge">AI CREATIVE STUDIO</span>
-        <h1>Every visual starts with an idea.</h1>
-        <p class="hero-sub">Decode, compose and enhance your creative prompts.</p>
+        <h1>Understand visuals.<br><span>Create better prompts.</span></h1>
+        <p class="hero-sub">Upload an image or video to understand its visual language and turn it into generation-ready prompts.</p>
       </div>
+      <nav class="mode-pills" aria-label="Orb modes">
+        <button id="mode-decode" class="mode-pill active" type="button" aria-current="page"><svg class="mode-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m4 17 5-5 4 4 3-3 5 5"/></svg><span class="mode-copy"><strong>Decode</strong><small>Understand visuals</small></span></button>
+        <button id="mode-compose" class="mode-pill" type="button"><svg class="mode-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m16 3 5 5-12 12-6 1 1-6L16 3ZM13 6l5 5M4 15l5 5"/></svg><span class="mode-copy"><strong>Compose</strong><small>Build from a reference</small></span></button>
+        <button id="mode-enhance" class="mode-pill" type="button"><svg class="mode-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6L12 3ZM20 3v4M18 5h4"/></svg><span class="mode-copy"><strong>Enhance</strong><small>Improve a prompt</small></span></button>
+        <div id="mode-create" class="mode-pill mode-create" role="group" aria-label="Create mode locked; coming soon">
+          <span class="create-title">Create <svg class="create-lock" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+          <small>Coming soon</small>
+          <button id="create-info" class="create-info" type="button" aria-label="About the upcoming Create mode" aria-haspopup="dialog" aria-controls="create-popover" aria-expanded="false">i</button>
+          <div id="create-popover" class="create-popover hidden" role="dialog" aria-labelledby="create-popover-title" aria-modal="false">
+            <div class="create-popover-head"><strong id="create-popover-title">Create · Coming soon</strong><button id="create-popover-close" type="button" aria-label="Close Create information"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19"/></svg></button></div>
+            <p>Create is Orb's next stage. It will use advanced image and video generation models to turn prompts shaped by Decode, Compose and Enhance into finished media.</p>
+            <p class="create-flow">Decode → understand · Compose → build · Enhance → refine · Create → realize</p>
+          </div>
+        </div>
+      </nav>
       <p id="mode-description" class="mode-description">Reconstruct a plausible generation prompt from an image or video.</p>
 
       <div id="upload-shell" class="upload-shell">
@@ -126,22 +143,23 @@
             </svg>
           </div>
           <div class="dz-text">
-            <strong>Drop your image or video</strong>
-            <span>Your reference. Your next creation.</span>
+            <strong>Drop image or video here</strong>
+            <span>Your reference. A new creative direction.</span>
             <small>JPEG, PNG, WebP up to 20 MB; MP4, MOV, M4V, WebM up to 200 MB.</small>
           </div>
           <div id="choose-file-btn" class="choose-file-btn">
-            <span class="choose-file-content" aria-hidden="true">Choose file</span>
+            <span class="choose-file-content" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM14 3v6h6"/></svg>Choose file</span>
             <input id="file-input" class="file-picker-input" type="file" aria-label="Choose file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,video/mp4,.mp4,.m4v,.mov,.webm">
           </div>
         </div>
 
         <div id="file-card" class="file-card hidden">
+          <svg class="selected-file-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6ZM14 3v6h6M8 14h8M8 17h5"/></svg>
           <p id="file-kicker" class="file-kicker">Ready to decode</p>
           <div class="file-name" id="file-name"></div>
           <div class="file-meta" id="file-meta"></div>
           <p id="file-check-status" class="file-meta hidden" role="status" aria-live="polite"></p>
-          <button id="file-clear" class="btn ghost" type="button">Choose a different file</button>
+          <button id="file-clear" class="btn ghost" type="button">Remove file</button>
           <button id="decode-btn" class="btn primary block initializing" type="button" disabled>
             <span>Preparing Orb…</span><small>One moment</small>
           </button>
@@ -163,21 +181,6 @@
         <div id="enhance-error" class="error hidden" role="alert"></div>
       </div>
 
-      <nav class="mode-pills" aria-label="Orb modes">
-        <button id="mode-decode" class="mode-pill active" type="button" aria-current="page">Decode</button>
-        <button id="mode-compose" class="mode-pill" type="button">Compose</button>
-        <button id="mode-enhance" class="mode-pill" type="button">Enhance</button>
-        <div id="mode-create" class="mode-pill mode-create" role="group" aria-label="Create mode locked; coming soon">
-          <span class="create-title">Create <svg class="create-lock" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
-          <small>Coming soon</small>
-          <button id="create-info" class="create-info" type="button" aria-label="About the upcoming Create mode" aria-haspopup="dialog" aria-controls="create-popover" aria-expanded="false">i</button>
-          <div id="create-popover" class="create-popover hidden" role="dialog" aria-labelledby="create-popover-title" aria-modal="false">
-            <div class="create-popover-head"><strong id="create-popover-title">Create · Coming soon</strong><button id="create-popover-close" type="button" aria-label="Close Create information"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5 19 19M19 5 5 19"/></svg></button></div>
-            <p>Create is Orb's next stage. It will use advanced image and video generation models to turn prompts shaped by Decode, Compose and Enhance into finished media.</p>
-            <p class="create-flow">Decode → understand · Compose → build · Enhance → refine · Create → realize</p>
-          </div>
-        </div>
-      </nav>
       <p class="testnet-note">Arbitrum Sepolia testnet credits · Demo only · No real-money value</p>
     </section>
 
@@ -209,6 +212,7 @@
         <img id="res-image" class="preview hidden" alt="Uploaded reference preview">
       </div>
 
+      <div class="result-grid">
       <div id="res-analysis-card" class="card hidden">
         <p class="card-overline">Visual reference</p>
         <h3>Visual analysis</h3>
@@ -225,7 +229,8 @@
         <pre id="res-prompt" class="prompt-text"></pre>
         <button id="copy-prompt" class="btn ghost" type="button">Copy prompt</button>
         <span id="copy-status" class="copy-status" role="status" aria-live="polite"></span>
-        <div id="res-refinements" class="refinements hidden"></div>
+      </div>
+      <div id="res-refinements" class="card refinements hidden"></div>
       </div>
 
       <button id="again-btn" class="btn primary block" type="button">Start another</button>

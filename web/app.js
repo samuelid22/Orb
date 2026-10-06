@@ -114,7 +114,13 @@ function finishActionTiming(status) {
   actionTiming?.finish(status);
   actionTiming = null;
 }
-wallet = initWallet({ onBalance: () => { syncDecodeButton(); resumePaidJob(); } });
+wallet = initWallet({ onBalance: (balance) => {
+  // Presentation only: the existing authenticated wallet remains authoritative.
+  document.getElementById("header-credit-value").textContent = String(balance);
+  document.getElementById("header-credits").classList.toggle("hidden", !wallet?.isAuthenticated());
+  syncDecodeButton();
+  resumePaidJob();
+} });
 
 function rememberPaidJob(jobId) {
   if (creditMode === "credits" && wallet.walletAddress()) {

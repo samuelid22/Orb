@@ -1,5 +1,39 @@
 # ORB Project Handoff
 
+## 2026-10-07 — Liquid-glass UI test branch
+
+- Branch: `ui-liquid-glass-test`, created from main
+  `2399c9f896f2f9264b8f0e2e42de8a733e07768b`. Main is not merged or modified.
+- The five uncommitted Phase 3 experiment files were preserved in stash
+  `bd0d5a667b95f0060da719a92a54cd0f49f36bc8` before branching; they are not part
+  of this UI change. The stash and ignored benchmark artifacts remain intact.
+- Replaced the frontend presentation with an ice-blue liquid-glass system:
+  compact hero, mode cards above the workspace, atmospheric CSS background,
+  glass upload/selected/Enhance/processing/result surfaces, wallet capsules and
+  floating wallet sheet. The original ringed Orb and reduced-motion support
+  remain. Desktop max-width stays 1005px; mobile uses two-column mode controls.
+- All existing DOM IDs remain. The real directly tappable file input and its
+  accepted formats, readability preflight and reset behavior are unchanged.
+- The only `app.js` change mirrors authenticated balances into the new header
+  credit capsule. `wallet.js`, backend, AI, fee estimation, pricing, payments,
+  database, credit settlement and job recovery behavior are unchanged.
+- `vercel.json` adds a Git deployment disable entry for this test branch only,
+  preventing automatic preview deployment on push. No live infrastructure or
+  environment configuration was changed.
+- Full backend regression: **319 passed, 8 expected Postgres skips**. Guarded
+  production frontend build passed with a placeholder HTTPS API origin.
+- Full frontend regression: **196 passed across 8 files**, including the four
+  added presentation tests. A concurrent validation run hit local process-start
+  timeouts; the full standalone rerun passed without weakening tests.
+- Rendered Chromium checks passed at 1440, 1280, 1024, 768, 390, 360 and 320px,
+  including direct native input activation, sticky wallet close, Create lock,
+  quantity/payment controls, mocked results and reduced motion. Extended checks
+  verified Copy Prompt, keyboard focus and actual Orb highlight movement.
+- See `docs/LIQUID_GLASS_UI.md` for scope, preservation details and validation
+  limits. Screenshots/harness are ignored under `output/liquid-glass/`. No live
+  wallet transactions or AI calls were made; physical wallet WebViews still need
+  device testing. No deployment, production changes or Prometheus changes.
+
 ORB is an AI-powered creative intelligence platform for the Arbitrum Open
 House Online Buildathon. It reuses the proven Prometheus analysis engine but
 is an independent project: new frontend, new branding, separate repository,

@@ -1415,3 +1415,67 @@ a temporary process-only model override described below.
   No production AI/RPC/database/service access, deployment or infrastructure
   mutation occurs. User authorized commit/push to main after passing validation;
   automatic Git deployments were previously confirmed disabled.
+
+## 2026-10-06 — Video performance Phase 2 experiments; no production change
+
+- Profiled existing commands before experiments: scene detection selects every
+  native video frame with gt(scene,0.3)/showinfo and null output; individual JPEG
+  extraction uses accurate input-side -ss, original dimensions and q:v 2.
+  The reported 32 unique frames therefore require 32 extraction processes plus
+  one scene-detection process. Production retains these commands and launches.
+- Added local-only scripts/benchmark-video-phase2.py, ten experiment tests,
+  docs/VIDEO_PHASE2.md and a 324-row generated-fixture equivalence CSV. Sources
+  are synthetic moving H.264/AAC videos approximating 17 s landscape, 30 s
+  vertical and 120 s 720p. Media/raw reports stay ignored under output/.
+  No downloaded/user media or production secrets/services were used.
+- Default workstation extraction wall milliseconds (baseline / single / two
+  batches): short 1791.7 / 550.1 / 1318.1; medium 1506.1 / 1047.6 / 2140.0;
+  long 4088.2 / 2896.8 / 5743.7. Single-batch CPU cost rose about 70% on medium
+  and 93% on long. A one-CPU sensitivity check showed medium 2428.5 -> 5439.7
+  ms and long 7105.2 -> 8964.2 ms: about 124% and 26% slower, respectively.
+  This fails the safe constrained-host performance gate. No batching adopted.
+- Stream suppression, explicit decoder threads and output-side seeking were
+  also benchmarked. Scene boundaries matched across all tested flags, but
+  no scene command showed consistent large benefit across both host setups.
+  Explicit first-video mapping cannot universally preserve automatic stream
+  selection. No scene-command change adopted and no FFmpeg parallelism added.
+- All 54 representative baseline frames match the original production helper
+  byte-for-byte. Six experimental variants preserve those JPEGs, dimensions,
+  q:v 2 and evidence ordering; source checksums independently match batch/thread
+  variants. Additional VFR/odd/overlapping timestamp tests pass. Output-side
+  seek equality is JPEG-based; its actual emitted PTS was not independently
+  exposed. The report documents seek-rebased timestamp precision limits.
+- Full backend: 319 passed, 8 expected real-Postgres skips, 142 existing
+  warnings. Full frontend ran twice: 191 passed, one unchanged USDG cross-method
+  quote test failed at web/wallet.test.js:585 (expected wrong payment method,
+  received 3 testnet credits added). Both variants pass isolated; likely timing
+  or test-order sensitivity remains unconfirmed. No wallet/test changes made.
+  Guarded frontend build passed with https://orb-api.example.invalid.
+- Phase 1 concurrency/order, probes/cache, AI prompts/model, frame evidence,
+  instrumentation, payments/credit lifecycle, database, UI and infrastructure
+  remain unchanged. No production speedup claimed. Prometheus and orb-demo-video
+  untouched. No commit/push/deploy: main/origin remain at
+  a722bbb936b97990865c14f4bc17a3a52f6a7b2a. Experiments/tests/docs are uncommitted.
+- Next work needs actual source codec/GOP/deployed FFmpeg CPU-budget evidence
+  before considering adaptive batching, plus a separate diagnosis of the
+  frontend full-suite failure. Do not deploy these experiments as production
+  extraction code or infer Render performance from the multicore benchmark.
+
+## 2026-10-06 — Wallet test isolation resolved; benchmark documentation approved
+
+- Wallet test failure above was traced to a real config retry timer surviving
+  the intentional preview-config failure test. Its old wallet instance reused
+  a later test's fetch mock/document and replaced that test's method controls.
+  Production payment validation was unaffected.
+- Commit 97568fac4714cfd30d0d236ffbf293de1415197a, pushed to origin/main,
+  modifies only web/wallet.test.js: fake timers for the intentional retry,
+  deterministic retry assertions, zero remaining fake timers before restoring
+  real timers, and explicit authentication/selection/rejection assertions.
+- Repeated affected cases passed ten executions each; wallet 59 passed; full
+  frontend 192 passed; full backend 319 passed, 8 expected PostgreSQL skips;
+  guarded production frontend build passed. No production code was changed.
+- User now explicitly authorizes committing/pushing the five Phase 2 benchmark
+  files with message "Document video extraction benchmarks". The benchmark
+  report records the resolved validation issue. No production extraction change,
+  live provider/database access, deployment or infrastructure mutation is part
+  of this commit. Prometheus and orb-demo-video remain untouched.

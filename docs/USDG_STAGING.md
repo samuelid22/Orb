@@ -196,6 +196,11 @@ and the exact token. Bootstrap must succeed against the isolated database.
    that same URL for signing. If the preview is replaced with a new unique URL,
    update staging origin again, or use its actual stable branch alias if offered
    by Vercel. No wildcard or production origin change is needed.
+   The separate `staging-origin-allowlist-test` backend branch additionally
+   supports `ORB_ADDITIONAL_PUBLIC_ORIGINS` for explicitly trusted Preview URLs
+   while keeping the existing primary unchanged. See [trusted origins](TRUSTED_ORIGINS.md).
+   This support requires a separately approved staging backend deployment;
+   it is not enabled on the existing service by these repository changes.
 
 ## Obtain test assets and run the real test
 

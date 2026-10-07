@@ -356,7 +356,7 @@ Enter these backend settings privately. All secret and account-specific values b
 
 Production requires Postgres, the Gemini provider and explicit model, a server-side API key, paid credit mode, local testing disabled, and an exact HTTPS frontend origin. It refuses an ephemeral SQLite ledger. Production does not require `ORB_DATA_DIR`, `ORB_CREDIT_DB`, a durable `ORB_OUTPUT_DIR`, or a Supabase service-role key.
 
-Set `ORB_PUBLIC_ORIGIN` to the frontend's exact browser origin, without a trailing slash or path. CORS and signed wallet challenges use this origin. A different preview domain needs its own explicitly configured backend origin. Do not enable legacy payment settings or add wallet private keys.
+Set `ORB_PUBLIC_ORIGIN` to the primary frontend's exact browser origin. On the `staging-origin-allowlist-test` branch, optional `ORB_ADDITIONAL_PUBLIC_ORIGINS` accepts a comma-separated list of additional exact trusted origins (maximum eight distinct origins including primary). Leave it unset to retain single-origin behavior. Do not put a list in `ORB_PUBLIC_ORIGIN`, use wildcards, or include paths, queries, credentials or fragments. Public origins require HTTPS; an optional trailing `/` is canonicalized away. CORS and wallet authorization share this allowlist, but a signed challenge is bound to the specific origin that requested it: another trusted origin cannot use it. See [trusted-origin configuration](docs/TRUSTED_ORIGINS.md). This branch support has not been deployed. Do not enable legacy payment settings or add wallet private keys.
 
 ### Vercel Frontend
 

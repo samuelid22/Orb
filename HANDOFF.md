@@ -1479,3 +1479,42 @@ a temporary process-only model override described below.
   report records the resolved validation issue. No production extraction change,
   live provider/database access, deployment or infrastructure mutation is part
   of this commit. Prometheus and orb-demo-video remain untouched.
+
+## 2026-10-07 — Strict trusted preview origins (backend test branch)
+
+- Created `staging-origin-allowlist-test` directly from main
+  `2399c9f896f2f9264b8f0e2e42de8a733e07768b`. The liquid-glass branch remains
+  at `d2bbca684b8fe65a640757f6f5a30e713e4c99d0`; the existing Phase 3 experiment
+  stash is preserved and was not applied or included.
+- Added optional `ORB_ADDITIONAL_PUBLIC_ORIGINS`, a strict comma-separated
+  exact-origin list, while retaining `ORB_PUBLIC_ORIGIN` as the primary.
+  A shared parser canonicalizes scheme/host/default ports/root slash, rejects
+  malformed origins, credentials, wildcards, paths, queries/fragments and
+  empty list entries, and limits the set to eight distinct origins. Public
+  configuration requires non-local HTTPS. Invalid configuration fails startup.
+- CORS and origin-protected wallet/AI routes use the shared trusted set.
+  Existing CORS headers, methods and credentials policy are unchanged. Local
+  legacy development CORS remains CORS-only and cannot authorize wallet actions.
+- Challenges contain the requesting origin in their signed domain and URI.
+  Verification checks the stored binding against the requesting origin before
+  signature recovery/nonce consumption. A-to-B and B-to-A replay is rejected
+  even when both are trusted, without consuming the original challenge.
+- No database schema or migration changes. Existing primary-origin challenge
+  format and valid bearer sessions remain supported. Session lifetime,
+  quote pricing, native ETH/USDG verification, credit settlement/idempotency,
+  AI processing and frontend application logic are unchanged.
+- Added 94 parser/security/HTTP/backward-compatibility/payment regression cases.
+  The six challenge/replay cases passed three consecutive runs. Full backend:
+  413 passed, 8 expected opt-in real-Postgres skips. Full frontend: 192 passed,
+  including wallet tests; guarded production build passed with a non-secret
+  placeholder HTTPS API origin. No live database/provider calls were made.
+- The initial full backend run hit the existing mocked-Postgres temporary-folder
+  cleanup race (complete state becomes visible before finally removes the folder).
+  It passed in isolation and the full rerun passed unchanged. No test assertion,
+  cleanup code or pipeline behavior was weakened/changed to obtain the pass.
+- Added only a branch-specific Vercel automatic Git deployment restriction and
+  its existing guard test assertion so pushing this backend branch cannot
+  deploy a frontend. Main and the existing USDG restriction remain unchanged.
+- See docs/TRUSTED_ORIGINS.md for the future staging-only environment setting.
+  No Render/Vercel service settings, production database, original Prometheus,
+  or orb-demo-video were accessed or modified. No merge or deployment authorized.

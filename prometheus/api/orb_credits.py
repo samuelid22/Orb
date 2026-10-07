@@ -15,7 +15,7 @@ import re
 import secrets
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -27,6 +27,7 @@ from eth_keys.exceptions import BadSignature
 from eth_utils import is_address, to_checksum_address
 
 from prometheus.api.orb_database import OrbDatabase
+from prometheus.api.orb_origins import OriginError, TrustedOrigins
 from prometheus.api.orb_usdg import USDG_CONTRACT, USDG_DECIMALS, USDG_PRICE, matching_transfer, transfer_data
 
 
@@ -60,8 +61,13 @@ class CreditConfig:
     usdg_decimals: int = USDG_DECIMALS
     usdg_price: int = USDG_PRICE
     deployment_target: str = ""
+    additional_public_origins: str = ""
+    trusted_origins: TrustedOrigins = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        trusted = TrustedOrigins.parse(self.public_origin, self.additional_public_origins)
+        object.__setattr__(self, "trusted_origins", trusted)
+        object.__setattr__(self, "public_origin", trusted.primary)
         if (self.payment_method not in {"native", "native_eth", "usdg"} or self.chain_id != CHAIN_ID
                 or any(method not in {"native_eth", "usdg"} for method in self.payment_methods)
                 or len(set(self.payment_methods)) != len(self.payment_methods)):
@@ -72,19 +78,15 @@ class CreditConfig:
                     or self.usdg_decimals != USDG_DECIMALS
                     or self.receiver.lower() == USDG_CONTRACT.lower()
                     or (self.deployment_target == "usdg-staging"
-                        and self.public_origin.rstrip("/") == "https://orb-azure-ten.vercel.app")):
+                        and "https://orb-azure-ten.vercel.app" in trusted.origins)):
                 raise ValueError("USDG requires explicit payment methods or the isolated staging target, and exact Paxos Sepolia token configuration.")
             if type(self.usdg_price) is not int or self.usdg_price <= 0:
                 raise ValueError("USDG credit price must be a positive integer in base units.")
         if self.price_wei <= 0 or not 1 <= self.confirmations <= 100:
             raise ValueError("Invalid Orb testnet credit price or confirmation count.")
         if self.enabled:
-            origin = urlparse(self.public_origin)
             rpc = urlparse(self.rpc_url)
-            if (not origin.scheme or not origin.netloc or origin.path not in {"", "/"}
-                    or origin.query or origin.fragment
-                    or (origin.scheme != "https" and origin.hostname not in {"localhost", "127.0.0.1"})
-                    or rpc.scheme != "https" or not rpc.netloc or not is_address(self.receiver)):
+            if (not trusted.primary or rpc.scheme != "https" or not rpc.netloc or not is_address(self.receiver)):
                 raise ValueError("Orb credit configuration requires a trusted origin, HTTPS RPC, and receiver address.")
 
     @property
@@ -131,17 +133,17 @@ class CreditService:
 
     def challenge(self, address: str, origin: str) -> dict:
         self._require_ready()
-        self._check_origin(origin)
+        origin = self._check_origin(origin)
         if not is_address(address):
             raise CreditError("Enter a valid wallet address.")
         wallet = to_checksum_address(address)
         nonce = secrets.token_hex(16)
         issued = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         expiry = datetime.fromtimestamp(time.time() + 300, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-        parsed = urlparse(self.config.public_origin)
+        parsed = urlparse(origin)
         message = (f"{parsed.netloc} wants you to sign in with your Ethereum account:\n{wallet}\n\n"
                    "Sign in to Orb's Arbitrum Sepolia testnet demo.\n\n"
-                   f"URI: {self.config.public_origin}\nVersion: 1\nChain ID: {CHAIN_ID}\n"
+                   f"URI: {origin}\nVersion: 1\nChain ID: {CHAIN_ID}\n"
                    f"Nonce: {nonce}\nIssued At: {issued}\nExpiration Time: {expiry}")
         with self._db() as db:
             db.execute("INSERT INTO challenges VALUES (?, ?, ?, ?, 0)",
@@ -150,7 +152,7 @@ class CreditService:
 
     def sign_in(self, nonce: str, signature: str, origin: str) -> dict:
         self._require_ready()
-        self._check_origin(origin)
+        origin = self._check_origin(origin)
         if not isinstance(nonce, str) or not isinstance(signature, str) or len(signature) > 256:
             raise CreditError("Invalid wallet signature.", 401)
         with self._db() as db:
@@ -158,6 +160,12 @@ class CreditService:
             row = db.execute("SELECT * FROM challenges WHERE nonce=?" + self._lock(), (nonce,)).fetchone()
             if row is None or row["used"] or row["expires"] < time.time():
                 raise CreditError("Sign-in challenge expired or already used.", 401)
+            try:
+                bound_origin = self.config.trusted_origins.challenge_origin(row["message"])
+            except OriginError:
+                raise CreditError("Wallet challenge origin is invalid.", 401) from None
+            if bound_origin != origin:
+                raise CreditError("Wallet challenge belongs to a different origin.", 403)
             try:
                 signer = Account.recover_message(encode_defunct(text=row["message"]), signature=signature)
             except (ValueError, TypeError, BadSignature) as exc:
@@ -193,9 +201,11 @@ class CreditService:
         with self._db() as db:
             db.execute("DELETE FROM sessions WHERE token_hash=? AND wallet=?", (token_hash, wallet))
 
-    def _check_origin(self, origin: str | None) -> None:
-        if origin != self.config.public_origin:
-            raise CreditError("Wallet request origin is not trusted.", 403)
+    def _check_origin(self, origin: str | None) -> str:
+        try:
+            return self.config.trusted_origins.require(origin)
+        except OriginError:
+            raise CreditError("Wallet request origin is not trusted.", 403) from None
 
     def balance(self, wallet: str) -> dict:
         with self._db() as db:

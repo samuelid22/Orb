@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from urllib.parse import urlparse
 
 from prometheus.api.orb_database import validate_postgres_url
+from prometheus.api.orb_origins import OriginError, TrustedOrigins
 
 
 def validate_public_deployment(upload_root: Path, database_url: str) -> None:
@@ -28,12 +28,11 @@ def validate_public_deployment(upload_root: Path, database_url: str) -> None:
             or any(name.startswith("PROMETHEUS_") and value for name, value in os.environ.items())):
         raise RuntimeError("Production must use Orb-only configuration and keep inherited payments disabled.")
 
-    origin = os.environ.get("ORB_PUBLIC_ORIGIN", "")
-    parsed = urlparse(origin)
-    if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-            or parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-            or origin != f"{parsed.scheme}://{parsed.netloc}"):
-        raise RuntimeError("Production requires the exact HTTPS Orb frontend origin.")
+    try:
+        TrustedOrigins.parse(os.environ.get("ORB_PUBLIC_ORIGIN", ""),
+                             os.environ.get("ORB_ADDITIONAL_PUBLIC_ORIGINS", ""), public=True)
+    except OriginError:
+        raise RuntimeError("Production requires exact trusted HTTPS Orb frontend origins.") from None
 
     if not database_url:
         raise RuntimeError("Production requires ORB_DATABASE_URL for the Postgres ledger and results.")

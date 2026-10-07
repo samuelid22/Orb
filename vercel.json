@@ -3,5 +3,5 @@
   "framework": "vite",
   "buildCommand": "npm run build:vercel",
   "outputDirectory": "web_dist",
-  "git": { "deploymentEnabled": { "usdg-test": false } }
+  "git": { "deploymentEnabled": { "usdg-test": false, "staging-origin-allowlist-test": false } }
 }

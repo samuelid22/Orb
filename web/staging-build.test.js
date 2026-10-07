@@ -22,6 +22,7 @@ describe("USDG staging deployment isolation", () => {
       VITE_API_BASE_URL: "https://orb-api-7qwv.onrender.com" })).toContain("API origin is configured");
     const config = JSON.parse(readFileSync("vercel.json", "utf8"));
     expect(config.git.deploymentEnabled["usdg-test"]).toBe(false);
+    expect(config.git.deploymentEnabled["staging-origin-allowlist-test"]).toBe(false);
     expect(config.git.deploymentEnabled.main).toBeUndefined();
   });
 });

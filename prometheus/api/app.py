@@ -18,7 +18,6 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
 from prometheus import __version__
@@ -30,6 +29,7 @@ from prometheus.api.dto import build_basic_result_dto, build_result_dto
 from prometheus.api.jobs import Job, JobManager
 from prometheus.api.orb_credits import CHAIN_ID, CreditConfig, CreditError, CreditService
 from prometheus.api.orb_deployment import validate_public_deployment
+from prometheus.api.orb_origins import TrustedOriginCORSMiddleware
 from prometheus.api.orb_usdg import USDG_PRICE, parse_usdg_price
 from prometheus.api.payments import PaymentConfig, PaymentError, PaymentPending, PaymentService
 from prometheus.config import PrometheusConfig
@@ -184,7 +184,8 @@ def create_app(
     credit_service = orb_credit_service or CreditService(CreditConfig(
         database=credit_db,
         database_url=database_url if public_mode else "",
-        public_origin=os.environ.get("ORB_PUBLIC_ORIGIN", "").rstrip("/"),
+        public_origin=os.environ.get("ORB_PUBLIC_ORIGIN", ""),
+        additional_public_origins=os.environ.get("ORB_ADDITIONAL_PUBLIC_ORIGINS", ""),
         rpc_url=os.environ.get("ORB_ARBITRUM_RPC_URL", ""),
         receiver=os.environ.get("ORB_CREDIT_RECEIVER", ""),
         price_wei=int(os.environ.get("ORB_CREDIT_PRICE_WEI", "1000000000000")),
@@ -233,14 +234,13 @@ def create_app(
     app = FastAPI(title="Orb", version=__version__, docs_url="/api/docs")
     app.add_middleware(TimingMiddleware)
     app.state.prometheus_startup_complete = False
-    orb_origin = os.environ.get("ORB_PUBLIC_ORIGIN", "").rstrip("/")
-    cors_origins = [orb_origin] if orb_origin else []
+    cors_origins = list(credit_service.config.trusted_origins.origins)
     if os.environ.get("ORB_ENV") == "local":
         cors_origins.extend(origin for origin in _cors_origins(os.environ.get("PROMETHEUS_CORS_ORIGINS"))
                             if origin not in cors_origins)
     if cors_origins:
         app.add_middleware(
-            CORSMiddleware,
+            TrustedOriginCORSMiddleware,
             allow_origins=cors_origins,
             allow_credentials=False,
             allow_methods=["GET", "POST", "OPTIONS"],

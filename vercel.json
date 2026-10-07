@@ -3,5 +3,10 @@
   "framework": "vite",
   "buildCommand": "npm run build:vercel",
   "outputDirectory": "web_dist",
-  "git": { "deploymentEnabled": { "usdg-test": false } }
+  "git": {
+    "deploymentEnabled": {
+      "usdg-test": false,
+      "ui-liquid-glass-test": false
+    }
+  }
 }

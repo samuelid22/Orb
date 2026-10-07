@@ -195,7 +195,7 @@ describe("Orb frontend", () => {
     await flush();
 
     expect(document.querySelector(".wordmark").textContent).toBe("Orb");
-    expect(document.querySelector(".mode-pill.active").textContent).toBe("Decode");
+    expect(document.querySelector(".mode-pill.active strong").textContent).toBe("Decode");
     expect(Array.from(document.querySelectorAll(".mode-pill")).map((item) => item.id)).toEqual([
       "mode-decode", "mode-compose", "mode-enhance", "mode-create",
     ]);
@@ -299,6 +299,8 @@ describe("Orb frontend", () => {
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/credits/quotes")).toHaveLength(2);
     expect(provider.request.mock.calls.filter(([arg]) => arg.method === "eth_maxPriorityFeePerGas")).toHaveLength(2);
     expect(document.getElementById("wallet-balance").textContent).toContain("1 testnet credit");
+    expect(document.getElementById("header-credit-value").textContent).toBe("1");
+    expect(document.getElementById("header-credits").classList.contains("hidden")).toBe(false);
     expect(document.getElementById("decode-btn").disabled).toBe(false);
     document.getElementById("wallet-close").click();
     document.getElementById("decode-btn").click();
@@ -949,4 +951,68 @@ describe("Orb frontend", () => {
     expect(css).toMatch(/@media \(max-width: 600px\)[\s\S]*?\.mode-pills\s*\{\s*grid-template-columns:\s*repeat\(2/);
     expect(document.querySelector("#wallet-close svg path").getAttribute("d")).toBe("M5 5 19 19M19 5 5 19");
   });
+
+  it("places the compact hero and all four mode controls before the active workspace", () => {
+    expect(document.querySelector(".hero h1").textContent).toBe("Understand visuals.Create better prompts.");
+    const modes = document.querySelector(".mode-pills");
+    expect(modes.compareDocumentPosition(document.getElementById("upload-shell")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const mode of ["decode", "compose", "enhance"]) {
+      const button = document.getElementById(`mode-${mode}`);
+      expect(button.querySelector("svg[aria-hidden=true]")).not.toBeNull();
+      expect(button.querySelector("strong").textContent.toLowerCase()).toBe(mode);
+      expect(button.querySelector("small").textContent).not.toBe("");
+    }
+    expect(document.querySelector("#mode-create button").id).toBe("create-info");
+    expect(document.getElementById("mode-create").matches("button,a")).toBe(false);
+  });
+
+  it("mirrors only authenticated credits in the header and clears them on disconnect", async () => {
+    const context = await startPaidJobWithExpiredSession();
+    document.getElementById("wallet-connect").click();
+    await flush();
+    await vi.waitFor(() => expect(document.getElementById("res-prompt").textContent).toBe("Recovered durable prompt."));
+    const capsule = document.getElementById("header-credits");
+    expect(capsule.classList.contains("hidden")).toBe(false);
+    expect(document.getElementById("header-credit-value").textContent).toBe("0");
+    // No purchase or new visual reservation is introduced by this read-only display.
+    expect(inspectCalls(context.fetchMock)).toHaveLength(1);
+    expect(context.fetchMock.mock.calls.filter(([url]) => String(url).includes("/credits/quotes"))).toHaveLength(0);
+    document.getElementById("wallet-disconnect").click();
+    await flush();
+    expect(capsule.classList.contains("hidden")).toBe(true);
+    expect(document.getElementById("header-wallet").textContent).toBe("Connect Wallet");
+  });
+
+  it("keeps real result content in distinct prompt, analysis and refinement surfaces", async () => {
+    const api = mockApi();
+    const original = api.getMockImplementation();
+    api.mockImplementation(async (url, options) => {
+      if (String(url).endsWith("/result")) {
+        const result = await original(url, options);
+        const body = await result.json();
+        return response({ ...body, refinements: ["Keep the soft lighting."] });
+      }
+      return original(url, options);
+    });
+    await import("./app.js");
+    await flush();
+    chooseVideo();
+    document.getElementById("decode-btn").click();
+    await vi.waitFor(() => expect(document.getElementById("screen-results").classList.contains("hidden")).toBe(false));
+    expect(document.querySelector(".result-grid #res-analysis-card").textContent).toContain("Centered subject");
+    expect(document.querySelector(".result-grid .prompt-card #res-prompt").textContent).toBe("A blue car under soft daylight.");
+    expect(document.getElementById("res-refinements").parentElement.className).toBe("result-grid");
+    expect(document.getElementById("res-refinements").textContent).toContain("Keep the soft lighting.");
+  });
+
+  it("provides opaque glass fallbacks, non-intercepting decoration and reduced motion", () => {
+    expect(css).toContain("--glass-blur: 20px");
+    expect(css).toMatch(/@supports[\s\S]*backdrop-filter/);
+    expect(css).toMatch(/\.topbar, \.upload-shell, \.about-panel, \.site-menu, \.create-popover[\s\S]*background: #eff8ff/);
+    expect(css).toMatch(/\.atmosphere \{[^}]*pointer-events: none/);
+    expect(css).toMatch(/\.upload-shell::before \{[^}]*pointer-events: none/);
+    expect(css).toMatch(/prefers-reduced-motion: reduce[\s\S]*\.card \{ animation: none/);
+    expect(html).not.toMatch(/<canvas|<iframe|<script[^>]+https:/i);
+  });
+
 });

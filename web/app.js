@@ -4,13 +4,12 @@ import { apiUrl } from "./api-url.js";
 import { initWallet } from "./wallet.js";
 import { checkFileReadable } from "./file-readability.js";
 import { createActionTiming } from "./performance.js";
+import { recoverService } from "./service-recovery.js";
 
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 15000;
 const UPLOAD_TIMEOUT_MS = 10 * 60 * 1000;
-const SERVICE_RETRY_MS = 2000;
-const SERVICE_DEADLINE_MS = 100000;
 const STEP_LABELS = {
   video: ["Uploading…", "Reading video structure…", "Analyzing scenes…", "Preparing results…"],
   image: ["Uploading…", "Analyzing image…", "Preparing prompt…", "Preparing results…"],
@@ -210,10 +209,6 @@ async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT_MS)
   }
 }
 
-function delay(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 function createUploadAttemptId() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `orb-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
@@ -279,7 +274,7 @@ function setMode(mode) {
 
 /* ---------- Service readiness (health -> ready -> upload-path canary) ---------- */
 
-async function pingUploadPath() {
+async function pingUploadPath(signal) {
   const pingId = createUploadAttemptId();
   const form = new FormData();
   form.append(
@@ -287,9 +282,9 @@ async function pingUploadPath() {
     new Blob(["orb-upload-ping"], { type: "application/octet-stream" }),
     "ping.bin",
   );
-  const response = await fetchWithTimeout(
+  const response = await fetch(
     apiUrl(`/api/upload-ping?upload_ping_id=${encodeURIComponent(pingId)}`),
-    { method: "POST", body: form },
+    { method: "POST", body: form, signal },
   );
   if (response.status === 204) return "ok";
   if (response.status === 404 || response.status === 405) return "unsupported";
@@ -302,48 +297,54 @@ async function waitForService() {
   const timing = createActionTiming("service_startup");
 
   serviceTask = (async () => {
-    const deadline = Date.now() + SERVICE_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      try {
-        const health = await fetchWithTimeout(apiUrl("/api/health"));
+    let configurationUnavailable = false;
+    const recovered = await recoverService({
+      probeHealth: async (signal) => {
+        const health = await fetch(apiUrl("/api/health"), { signal });
         const healthBody = await health.json().catch(() => ({}));
-        if (health.ok && healthBody.status === "ok") {
-          creditMode = healthBody.orb_ai_access || "local";
-          syncDecodeButton();
-          resumePaidJob();
-          if (healthBody.orb_ai_access === "configuration_required" || healthBody.orb_ai_access === "credits_unavailable") {
-            setServiceState(false);
-            els.serviceStatus.textContent = healthBody.orb_ai_access === "configuration_required"
-              ? "Orb AI is temporarily unavailable. Try again."
-              : "Testnet credits are temporarily unavailable. Try again.";
-            els.serviceStatus.classList.add("failed");
-            syncEnhanceStatus();
-            return false;
-          }
-          const ready = await fetchWithTimeout(apiUrl("/api/ready"));
-          const readyBody = await ready.json().catch(() => ({}));
-          if (ready.ok && readyBody.status === "ready") {
-            const ping = await pingUploadPath();
-            if (ping === "ok" || ping === "unsupported") {
-              els.serviceStatus.textContent = creditMode === "credits" && !wallet.hasCredit()
-                ? "A testnet credit is needed. Use Connect Wallet in the header to get started."
-                : "Orb service ready.";
-              els.serviceStatus.classList.add("ready");
-              els.serviceStatus.classList.remove("failed");
-              syncEnhanceStatus();
-              setServiceState(true);
-              return true;
-            }
-            els.serviceStatus.textContent = "Preparing Orb…";
-          }
+        return health.ok && healthBody.status === "ok" ? healthBody : null;
+      },
+      onHealth: (healthBody) => {
+        creditMode = healthBody.orb_ai_access || "local";
+        syncDecodeButton();
+        resumePaidJob();
+        if (healthBody.orb_ai_access === "configuration_required" || healthBody.orb_ai_access === "credits_unavailable") {
+          configurationUnavailable = true;
+          setServiceState(false);
+          els.serviceStatus.textContent = healthBody.orb_ai_access === "configuration_required"
+            ? "Orb AI is temporarily unavailable. Try again."
+            : "Testnet credits are temporarily unavailable. Try again.";
+          els.serviceStatus.classList.add("failed");
+          syncEnhanceStatus();
+          return false;
         }
-      } catch (error) {
-        // The service may still be starting; retry until the deadline.
-      }
-      if (Date.now() < deadline) {
-        await delay(Math.min(SERVICE_RETRY_MS, deadline - Date.now()));
-      }
+      },
+      verifyReadiness: async (request) => {
+        const ready = await request(async (signal) => {
+          const response = await fetch(apiUrl("/api/ready"), { signal });
+          const body = await response.json().catch(() => ({}));
+          return response.ok && body.status === "ready";
+        });
+        if (ready) {
+          const ping = await request(pingUploadPath);
+          if (ping === "ok" || ping === "unsupported") return true;
+          els.serviceStatus.textContent = "Preparing Orb…";
+        }
+        return false;
+      },
+    });
+    if (recovered) {
+      els.serviceStatus.textContent = creditMode === "credits" && !wallet.hasCredit()
+        ? "A testnet credit is needed. Use Connect Wallet in the header to get started."
+        : "Orb service ready.";
+      els.serviceStatus.classList.add("ready");
+      els.serviceStatus.classList.remove("failed");
+      syncEnhanceStatus();
+      setServiceState(true);
+      return true;
     }
+    // Keep the explicit configuration-required states selected by onHealth.
+    if (configurationUnavailable) return false;
     setServiceState(false);
     els.serviceStatus.textContent = "Orb is taking longer to start. Try again shortly.";
     els.serviceStatus.classList.add("failed");

@@ -1495,6 +1495,38 @@ a temporary process-only model override described below.
   frontend full-suite failure. Do not deploy these experiments as production
   extraction code or infer Render performance from the multicore benchmark.
 
+## 2026-10-08 — Faster bounded frontend backend wake-up detection
+
+- Frontend recovery now uses `web/service-recovery.js`: 5-second lightweight
+  health probes, a 1-second delay after failed probes, unchanged 15-second
+  readiness/canary allowances and a 5-second pause after failed full
+  verification. Requests and delays respect a monotonic 100-second deadline.
+- One awaited request at a time; the existing shared application recovery
+  task prevents duplicate startup/focus/online flows. Timed-out requests are
+  aborted, and late completion cannot update readiness. Successful full
+  verification stops all probes. Explicit configuration messages and existing
+  upload-canary compatibility semantics remain intact.
+- No attempt-count limit shortens recovery under latency. Worst-case fast
+  failed health responses produce 100 lightweight requests per recovery
+  window; stalled requests produce at most 17. Full verification retries are
+  limited to five-second pauses rather than running every second. No new
+  background keep-alive was added. Credit-config retry code is unchanged.
+- Added fake-clock recovery tests and application integration tests. The
+  existing intentional unavailable-health test now uses fake timers so its
+  retry cannot leak into another test. Full frontend: 215 passed. Guarded
+  production build passed with `https://orb-api.example.invalid`.
+- See `docs/BACKEND_WAKEUP.md` for exact before/after timings, lifecycle,
+  timeout/deadline behavior and load bounds. Backend/AI, payments, auth,
+  database, infrastructure and Prometheus are unchanged.
+- Read-only Vercel project inspection confirmed automatic Git deployments
+  are enabled for main. User explicitly requested keeping the eventual
+  validated commit local; do not push or deploy this change.
+- Final backend rerun: 319 passed, 8 expected real-Postgres skips, 142 existing
+  deprecation warnings. The first run had one timing-sensitive failure in
+  `test_ai_failure_retries_same_paid_job`: its existing 10-second polling
+  allowance ended while video processing was still running. It passed in
+  isolation and in the complete rerun without backend/test changes.
+
 ## 2026-10-06 — Wallet test isolation resolved; benchmark documentation approved
 
 - Wallet test failure above was traced to a real config retry timer surviving

@@ -502,13 +502,93 @@ describe("Orb frontend", () => {
   });
 
   it("keeps Decode disabled until the service passes health, ready, and the upload canary", async () => {
+    vi.useFakeTimers();
     const fetchMock = mockApi({ healthOk: false });
     await import("./app.js");
-    await flush();
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(document.getElementById("decode-btn").disabled).toBe(true);
     expect(document.getElementById("decode-btn").querySelector("span").textContent).toBe("Preparing Orb…");
     expect(inspectCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("shares one wake-up task across focus/online events and waits for the upload canary", async () => {
+    vi.useFakeTimers();
+    const listeners = vi.spyOn(window, "addEventListener");
+    const fetchMock = mockApi();
+    const original = fetchMock.getMockImplementation();
+    let resolveHealth;
+    let resolveCanary;
+    fetchMock.mockImplementation((url, options) => {
+      if (url === "/api/health") return new Promise((resolve) => { resolveHealth = resolve; });
+      if (isUploadPingUrl(url)) return new Promise((resolve) => { resolveCanary = resolve; });
+      return original(url, options);
+    });
+    await import("./app.js");
+    await vi.advanceTimersByTimeAsync(0);
+    const focus = listeners.mock.calls.find(([name]) => name === "focus")[1];
+    const online = listeners.mock.calls.find(([name]) => name === "online")[1];
+    focus(); online(); focus();
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/health")).toHaveLength(1);
+    chooseVideo();
+    expect(document.getElementById("decode-btn").disabled).toBe(true);
+    resolveHealth(response({ status: "ok" }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.getElementById("decode-btn").disabled).toBe(true);
+    focus(); online();
+    expect(fetchMock.mock.calls.filter(([url]) => isUploadPingUrl(url))).toHaveLength(1);
+    resolveCanary(response({}, 204));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(document.getElementById("decode-btn").disabled).toBe(false);
+    await vi.advanceTimersByTimeAsync(120000);
+    focus(); online();
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/health")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/ready")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => isUploadPingUrl(url))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/credits/config")).toHaveLength(1);
+    expect(inspectCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("recovers at one-second health intervals without repeating or resetting credit configuration", async () => {
+    vi.useFakeTimers();
+    const fetchMock = mockApi();
+    const original = fetchMock.getMockImplementation();
+    let healthCalls = 0;
+    fetchMock.mockImplementation((url, options) => {
+      if (url === "/api/health" && ++healthCalls < 3) return Promise.resolve(response({ status: "starting" }, 503));
+      return original(url, options);
+    });
+    await import("./app.js");
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(document.getElementById("service-status").textContent).not.toContain("Orb service ready.");
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/ready")).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(document.getElementById("service-status").textContent).toBe("Orb service ready.");
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/health")).toHaveLength(3);
+    expect(fetchMock.mock.calls.filter(([url]) => isUploadPingUrl(url))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/orb/credits/config")).toHaveLength(1);
+  });
+
+  it("allows readiness and upload verification to each take longer than five seconds", async () => {
+    vi.useFakeTimers();
+    const fetchMock = mockApi();
+    const original = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (url, options) => {
+      if (url === "/api/ready" || isUploadPingUrl(url)) {
+        await new Promise((resolve) => setTimeout(resolve, 6000));
+        expect(options.signal.aborted).toBe(false);
+      }
+      return original(url, options);
+    });
+    await import("./app.js");
+    chooseVideo();
+    await vi.advanceTimersByTimeAsync(11999);
+    expect(document.getElementById("decode-btn").disabled).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(document.getElementById("decode-btn").disabled).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/health")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/ready")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => isUploadPingUrl(url))).toHaveLength(1);
   });
 
   it("enables Decode after the upload-path canary succeeds", async () => {
